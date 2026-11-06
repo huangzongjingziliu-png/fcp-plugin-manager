@@ -1,5 +1,7 @@
 # 更新日志
 
+> **English summary** — Releases are numbered major.minor.patch and only ship after `swift build` passes with all unit tests green. The latest release, **1.6.5 (2026-11-06)**, adds direct read-only parsing of `.fcpbundle` libraries (no XML export required), a per-project panel for disabling unused plug-ins, precise restore of disable batches, plug-in origin detection from bundle identifiers and code signatures, a bilingual interface, and unit tests for library parsing, project scanning and localization coverage. Earlier entries cover backup-before-delete, Trash-based deletion, rename ledgers, batch operations, CLI support and the drag-and-drop scan panel. The full history below is in Chinese.
+
 版本号遵循「主.次.修订」。每个版本都以 `swift build` 通过、单元测试全绿为准。
 
 ## 1.6.5 — 2026-11-06

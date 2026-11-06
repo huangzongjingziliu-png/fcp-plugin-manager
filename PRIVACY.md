@@ -1,5 +1,7 @@
 # 隐私说明
 
+> **English summary** — This app is completely offline. It makes no network requests, has no accounts, analytics, crash reporting or ad SDKs, and does not collect, transmit or share any data. Everything it stores (backups of deleted plug-ins, disabled plug-ins, rename ledger, operation log) stays in `~/Library/Application Support/FCPPluginManager/` on your own Mac. Read-only library scans work on a temporary copy that is deleted afterwards. Uninstalling the app does not delete this data; remove the folder yourself when you no longer need it.
+
 一句话：**这个工具完全离线，不联网，不收集任何数据。**
 
 ## 采集什么

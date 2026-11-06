@@ -1,5 +1,7 @@
 # FCP 插件管理（FCP Plugin Manager）
 
+**中文** | [English](README.en.md)
+
 一个 macOS 原生小工具，用来管理 Final Cut Pro 的插件：扫描、暂停使用（禁用）、恢复、备份、删除、改名。全部在本机完成，不联网、不上传任何数据。
 
 > **这不是可以自由商用的开源项目。**
