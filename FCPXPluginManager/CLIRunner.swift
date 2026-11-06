@@ -102,6 +102,7 @@ enum CLIRunner {
                     "category": plugin.category.rawValue,
                     "path": plugin.path,
                     "isSystemLevel": plugin.isSystemLevel,
+                    "origin": plugin.origin.rawValue,
                     "version": plugin.version ?? "",
                     "vendor": plugin.vendor ?? "",
                     "sizeBytes": plugin.sizeBytes ?? 0,
@@ -111,8 +112,8 @@ enum CLIRunner {
         } else {
             if items.isEmpty { print("没有匹配的插件。") }
             for plugin in items {
-                let tag = plugin.isSystemLevel ? "系统级" : "用户级"
-                print("\(plugin.name)  [\(plugin.category.rawValue)]  \(tag)  \(plugin.path)")
+                let tag = plugin.isSystemLevel ? "所有用户安装" : "仅当前用户安装"
+                print("\(plugin.name)  [\(plugin.category.rawValue)]  [\(plugin.origin.displayName)]  \(tag)  \(plugin.path)")
             }
             print("\n共 \(items.count) 个插件。")
         }

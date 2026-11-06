@@ -19,11 +19,15 @@ FCPXPluginManager/
   PluginCategory.swift               PluginCategory / SidebarItem / PluginSource 枚举
   PluginViewModel.swift              扫描、备份、恢复、禁用、日志、批量进度
   ContentView.swift                  全部界面与交互
+  ProjectScan.swift                  工程扫描、与已安装插件匹配、按批次停用
+  FCPBundleReader.swift              只读解析 .fcpbundle（SQLite + NSKeyedArchiver + Effects.map）
+  ProjectBatches.swift               工程停用批次记录与精确恢复
+  HoverEffects.swift                 悬停动效
   RenameMap.swift                    CSV/JSON 译名表解析 + 改名预览 + 执行
   RenameLedger.swift                 改名台账、恢复原名
   Localization.swift                 中英文文案表与 T()
   CLIRunner.swift                    命令行实现
-Tests/FCPXPluginManagerTests/        P0 数据安全、P1 功能、改名台账
+Tests/FCPXPluginManagerTests/        P0 数据安全、P1 功能、工程扫描、库解析、本地化覆盖
 Scripts/
   build_app.sh                       构建 → 安装到 ~/Applications → 打 zip
   install_cli.sh                     安装 fcpplugin 到 ~/bin

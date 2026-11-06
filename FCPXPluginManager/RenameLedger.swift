@@ -248,9 +248,9 @@ extension PluginViewModel {
             case .needAuthentication(let command):
                 outcome.commands.append(command)
             case .targetExists(let reason):
-                outcome.failures.append("\(entry.newName)：\(reason)")
+                outcome.failures.append(T("%@：%@", entry.newName, reason))
             case .failure(let message):
-                outcome.failures.append("\(entry.newName)：\(message)")
+                outcome.failures.append(T("%@：%@", entry.newName, message))
             }
         }
         return outcome

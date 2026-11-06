@@ -49,6 +49,12 @@ final class Localization: ObservableObject {
         return Self.normalizedEnglish[Self.normalizePlaceholders(key)] ?? key
     }
 
+    /// 查英文对照表；查不到返回 nil。
+    /// 给测试用：可以一次性把源码里所有 `T("…")` 的 key 都验一遍，避免新增界面文案漏翻。
+    static func englishText(for key: String) -> String? {
+        normalizedEnglish[normalizePlaceholders(key)]
+    }
+
     /// 把 %lld / %d / %@ 统一成 {}，这样代码里用哪种占位符都能查到同一条英文。
     private static func normalizePlaceholders(_ text: String) -> String {
         text
@@ -94,6 +100,21 @@ final class Localization: ObservableObject {
         "系统级": "System",
         "可恢复": "Restorable",
 
+        // 来源与安装范围（不再用「系统级/用户级」这种含糊说法）
+        "安装范围": "Install Scope",
+        "安装位置": "Install Location",
+        "Apple 自带": "Apple built-in",
+        "Apple": "Apple",
+        "第三方": "Third-party",
+        "来源未知": "Unknown source",
+        "未知": "Unknown",
+        "所有用户": "All users",
+        "仅当前用户": "Current user only",
+        "所有用户安装": "Installed for all users",
+        "仅当前用户安装": "Installed for current user only",
+        "%@ / %@": "%@ / %@",
+        "%@ · %@": "%@ · %@",
+
         // 分类与位置
         "全部": "All",
         "效果": "Effects",
@@ -131,7 +152,7 @@ final class Localization: ObservableObject {
         "删除插件后会自动备份到这里": "Plug-ins you delete are backed up here automatically",
         "在插件列表点「全部禁用」或右键单个插件即可暂停使用": "Use “Disable All” or right-click a plug-in to pause it",
         "还没有操作记录。": "No operations yet.",
-        "操作日志": "Operation Log",
+        "操作日志": "Log",
         "插件详情": "Plugin Details",
         "预览图：暂时不做。读取插件预览需要额外解码包内容，会明显拖慢扫描，收益不大。":
             "Preview images are not supported. Decoding previews from plug-in bundles would noticeably slow down scanning for little benefit.",
@@ -179,7 +200,7 @@ final class Localization: ObservableObject {
         "原位置未知，无法停用": "Original location unknown — cannot disable",
         "启用选中的 (%lld)": "Enable Selected (%lld)",
         "备份并删除 (%lld)": "Back up & Delete (%lld)",
-        "撤销上一步": "Undo Last Step",
+        "撤销上一步": "Undo",
         "%lld（停用 %lld）": "%lld (%lld paused)",
         "%lld（未生效 %lld）": "%lld (%lld pending)",
 
@@ -528,7 +549,302 @@ final class Localization: ObservableObject {
         "失败 %@ 项": "%@ failed",
         "%@ 条明细": "%@ detail(s)",
         "展开查看每一条原因": "Show every reason",
-        "已停止，剩下的没有再处理。": "Stopped; the rest were not processed."
+        "已停止，剩下的没有再处理。": "Stopped; the rest were not processed.",
+
+        // 停用 / 启用确认
+        "停用系统级插件": "Disable System Plug-ins",
+        "停用第三方插件": "Disable Third-party Plug-ins",
+        "停用%@": "Disable %@",
+        "没有可停用的系统级插件。\n（系统级共 %@ 个，其余都在保护名单里）":
+            "No system-level plug-ins can be disabled.\n(%@ system-level in total; the rest are protected)",
+        "将停用系统级插件 %@ 个。": "%@ system-level plug-in(s) will be disabled.",
+        "\n其余 %@ 个在保护名单里，已自动跳过。":
+            "\nThe other %@ are protected and were skipped automatically.",
+        "\n\n系统级插件需要管理员密码，插件文件不会删除，之后可以一键启用回来。":
+            "\n\nSystem-level plug-ins require the admin password. Files are not deleted and can be enabled again in one click.",
+        "\n\n检测到 Final Cut Pro 正在运行，建议先退出。":
+            "\n\nFinal Cut Pro appears to be running. It is recommended to quit it first.",
+        "「%@」范围里没有可停用的插件。\n（系统级 %@ 个默认跳过，受保护 %@ 个）":
+            "No plug-ins can be disabled in “%@”.\n(%@ system-level skipped by default, %@ protected)",
+        "将停用「%@」的 %@ 个插件：": "“%@”: %@ plug-in(s) will be disabled:",
+        "\n• %@ %@ 个": "\n• %@: %@",
+        "\n\n本次不会动系统级 %@ 个（要用「系统级插件」入口才会停）。":
+            "\n\n%@ system-level plug-in(s) are left untouched (use the “System Plug-ins” entry to disable them).",
+        "\n受保护名单里的 %@ 个已自动跳过（收藏或当前工程正在使用）。":
+            "\n%@ protected plug-in(s) were skipped automatically (favorited or used by the current project).",
+        "\n\n插件文件不会真正删除，之后可以一键启用回来。":
+            "\n\nPlug-in files are not deleted and can be enabled again in one click.",
+        "\n\n其中 %@ 个是「没真正停用」的记录：原插件一直在用，启用时会把多余的副本移到废纸篓（可还原），原插件不动。":
+            "\n\n%@ of them are “not truly disabled” records: the original plug-in was in use all along, so enabling moves the redundant copy to the Trash (recoverable) and leaves the original untouched.",
+        "\n\n启用不会删除正在使用的插件。":
+            "\n\nEnabling never deletes a plug-in that is in use.",
+
+        // 按来源批量停用（Apple 自带 / 第三方 / 来源未知）
+        "插件": "Plug-ins",
+        "「%@」范围里没有可停用的插件。\n（Apple 自带 %@ 个默认跳过，受保护 %@ 个）":
+            "No plug-ins can be disabled in “%@”.\n(%@ Apple built-in skipped by default, %@ protected)",
+        "\n\n其中所有用户安装 %@ 个（需要管理员授权），仅当前用户安装 %@ 个。":
+            "\n\n%@ installed for all users (admin authorization required), %@ installed for the current user only.",
+        "\n有 %@ 个读不到签名信息，来源未知，按第三方插件处理。":
+            "\n%@ plug-in(s) have no readable signature — source unknown, treated as third-party.",
+        "\n\nApple 自带的 %@ 个已跳过，不会停用。":
+            "\n\n%@ Apple built-in plug-in(s) were skipped and will not be disabled.",
+        "将恢复启用「%@」分类的 %@ 个插件。":
+            "%@ plug-in(s) in “%@” will be re-enabled.",
+        "• %@ %@ 个": "• %@: %@",
+        "\n• 仅当前用户安装的 %@ 个，直接放回原目录\n• 所有用户安装的 %@ 个，需要管理员授权才能放回\n":
+            "\n• %@ installed for the current user only — moved back directly\n• %@ installed for all users — admin authorization required to move back\n",
+        "\n\n本次不会动 Apple 自带的 %@ 个。":
+            "\n\n%@ Apple built-in plug-in(s) will be left untouched.",
+        "• 所有用户安装的 %@ 个：原文件还在系统目录，Final Cut Pro 会照常加载；输入管理员密码后才会真正移走。":
+            "• %@ installed for all users: the original file is still in the system folder, so Final Cut Pro keeps loading it. It is only moved after you enter the admin password.",
+        "• 仅当前用户安装的 %@ 个：插件仍在原目录（旧版本留下的多余副本），不需要管理员密码，去「已禁用」页处理即可。":
+            "• %@ installed for the current user only: the plug-in is still in its original folder (a leftover copy from an older version). No admin password needed — handle it on the Disabled page.",
+        "默认停用所有第三方插件（含来源未知），Apple 自带的 %@ 个不动":
+            "Disables all third-party plug-ins by default (including unknown sources); %@ Apple built-in left untouched",
+        "默认停用所有第三方插件（含来源未知）":
+            "Disables all third-party plug-ins by default (including unknown sources)",
+        "Apple 自带跳过 %@ 个": "%@ Apple built-in skipped",
+        "以下 %@ 个插件装在所有用户目录，已经备份好，但删除原位置需要管理员密码。\n\n复制命令到「终端」执行，或按顶部提示处理。执行完点「刷新」复核。":
+            "%@ plug-in(s) installed for all users are backed up, but removing the original requires the admin password.\n\nCopy the command into Terminal, or follow the banner at the top. Then click Refresh.",
+        "有 %@ 个所有用户安装的插件没有移走（管理员授权未完成）。":
+            "%@ plug-in(s) installed for all users were not moved (admin authorization not completed).",
+        "真正停用 %@ 个所有用户安装的插件":
+            "Actually disabled %@ plug-in(s) installed for all users",
+        "已把 %@ 个插件移出系统目录。": "Moved %@ plug-in(s) out of the system folder.",
+        "以下 %@ 个插件装在所有用户目录，需要管理员密码，未恢复。复制命令到「终端」执行，执行完回到本应用点「刷新」。":
+            "%@ plug-in(s) installed for all users need the admin password and were not restored. Copy the command into Terminal, then come back and click Refresh.",
+        "「%@」装在所有用户目录，不能在这里直接改名。\n\n原因：%@\n\n复制命令到「终端」执行。执行完回到本应用点「刷新」，列表里应该显示「%@」。\n\n注意：这类改名无法自动记入日志，也不能用「撤销上一步」改回去，需要手动执行反向命令。":
+            "“%@” is installed for all users and cannot be renamed here.\n\nReason: %@\n\nCopy the command into Terminal. When it finishes, come back and click Refresh — the list should show “%@”.\n\nNote: this kind of rename is not logged automatically and cannot be undone with “Undo”, so run the reverse command manually.",
+        "装在所有用户目录的插件不能在这里直接改名，下面是可复制的命令：":
+            "Plug-ins installed for all users cannot be renamed here. Copy the commands below:",
+        "装在所有用户目录的插件恢复原名需要管理员密码，本应用不会自己提权。":
+            "Restoring the original name for plug-ins installed for all users requires the admin password; this app does not elevate itself.",
+        "%lld 个所有用户安装的插件需要管理员命令，见下方。":
+            "%lld plug-in(s) installed for all users need admin commands, see below.",
+        "筛选": "Filter",
+        "按来源或安装范围筛选；「一键全部禁用」默认不含 Apple 自带":
+            "Filter by source or install scope; “Disable All” excludes Apple built-in by default",
+
+        // 工程扫描
+        "工程扫描结果": "Project Scan Result",
+        "工程扫描失败": "Project Scan Failed",
+        "扫描工程": "Scan Project",
+        "工程：%@": "Project: %@",
+        "选择工程文件": "Choose Project File",
+        "选择 .fcpxml 工程文件，或一个 .fcpbundle 库":
+            "Choose a .fcpxml project file or a .fcpbundle library",
+        "选择或拖入 .fcpxml 工程文件或 .fcpbundle 库，扫描它实际用到的插件":
+            "Choose or drop a .fcpxml project file or a .fcpbundle library to scan which plug-ins it actually uses",
+        "查看上次工程扫描结果": "View the last project scan result",
+        "请选择 .fcpxml 工程文件或 .fcpbundle 库。你选中的是：%@":
+            "Choose a .fcpxml project file or a .fcpbundle library. You selected: %@",
+        "支持 .fcpxml 工程和 .fcpbundle 库。库会先复制到临时目录再只读解析，不会改动原库；只有格式读不懂时才需要导出 XML。":
+            ".fcpxml projects and .fcpbundle libraries are both supported. A library is copied to a temporary folder and parsed read-only, so the original is never modified; you only need to export XML if the format cannot be read.",
+        "把工程文件拖到这里": "Drop your project file here",
+        "松开即可开始扫描": "Release to start scanning",
+        "拖 .fcpxml 工程或 .fcpbundle 库进来，或点下面的「打开工程…」":
+            "Drop a .fcpxml project or a .fcpbundle library here, or use “Open Project…” below",
+        "打开工程…": "Open Project…",
+        "这个类型不支持。请拖入 .fcpxml 工程文件，或 .fcpbundle 库。":
+            "That file type is not supported. Drop a .fcpxml project file or a .fcpbundle library.",
+        "只支持单个文件，请一次拖一个进来。": "Only one file at a time, please.",
+        "正在扫描工程…": "Scanning project…",
+        "还没有扫描工程。": "No project scanned yet.",
+        "还没有成功扫描工程，无法判断哪些插件没用到。":
+            "No project has been scanned successfully, so unused plug-ins cannot be determined.",
+        "这个工程没用到的插件都已经停用，或都在保护名单里，没有需要处理的。":
+            "Every plug-in this project does not use is already disabled or protected. Nothing to do.",
+        "工程「%@」依赖的 %@ 个插件已自动进保护名单，不会被停用。":
+            "“%@” depends on %@ plug-in(s); they were protected automatically and will not be disabled.",
+        "\n\n将停用本工程没用到的 %@ 个插件：":
+            "\n\n%@ plug-in(s) unused by this project will be disabled:",
+        "\n\n本次不会动系统级 %@ 个（要停系统级请走「一键全部禁用 → 系统级插件」）。":
+            "\n\n%@ system-level plug-in(s) are left untouched (use Disable All → System Plug-ins to disable them).",
+        "\n\n风险提示：只停用「本工程没用到的」插件。若停用工程正在使用的插件，FCP 会提示「缺少效果」，参数也有丢失风险，所以本应用不会那样做。":
+            "\n\nRisk note: only plug-ins this project does not use are disabled. Disabling one that the project uses makes FCP report a missing effect and may lose parameters, so this app never does that.",
+        "本工程用到 %@ 个": "%@ used by this project",
+        "未使用 %@ 个": "%@ unused",
+        "系统级跳过 %@ 个": "%@ system-level skipped",
+        "本工程依赖的插件已自动加入保护名单，批量停用时不会碰它们。":
+            "Plug-ins this project depends on are protected automatically and are never touched by bulk disabling.",
+        "本工程用到": "Used by this project",
+        "本工程未使用（可停用）": "Unused by this project (can be disabled)",
+        "%@ · %@ 个": "%@ · %@",
+        "还有 %@ 个引用没匹配到本机插件（可能来自别的机器或已卸载）：%@":
+            "%@ reference(s) did not match any plug-in on this Mac (from another machine, or uninstalled): %@",
+        "这个工程的停用批次": "Disable batches for this project",
+        "%@ 个": "%@",
+        "恢复这一批": "Restore This Batch",
+        "停用不会删除插件文件，随时可以恢复。":
+            "Disabling never deletes plug-in files; you can restore them anytime.",
+        "恢复本次停用的 %@ 个": "Restore the %@ Disabled This Time",
+        "停用未使用的 %@ 个…": "Disable the %@ Unused…",
+        "已恢复": "Restored",
+        "待恢复 %@ 个": "%@ pending",
+        "已恢复 %@ 个 · 跳过 %@ 个": "%@ restored · %@ skipped",
+        "停用本工程未使用的插件": "Disable Plug-ins Unused by This Project",
+        "停用 %@ 个": "Disable %@",
+        "停用未使用": "Disable Unused",
+        "恢复本工程 %@ 个": "Restore %@ for This Project",
+        "只恢复为这个工程停用的这一批插件": "Restore only the batch disabled for this project",
+        "本工程未使用的插件…": "Plug-ins unused by this project…",
+
+        // 保护名单
+        "已收藏，永不参与批量停用": "Favorited — never included in bulk disabling",
+        "当前扫描的工程正在使用，已自动保护":
+            "Used by the current project — protected automatically",
+        "取消收藏": "Remove from Favorites",
+        "收藏（永不参与批量停用）": "Favorite (never included in bulk disabling)",
+
+        // 侧边栏 / 表格
+        "类别": "Category",
+        "系统": "System",
+        "停用这个插件": "Disable this plug-in",
+        "启用（恢复使用）": "Enable (resume use)",
+        "启用这个插件（恢复使用）": "Enable this plug-in (resume use)",
+        "全部第三方插件（%@）": "All third-party plug-ins (%@)",
+        "系统级插件（%@）…": "System-level plug-ins (%@)…",
+        "默认只停用第三方插件，系统级插件需要单独选择":
+            "Only third-party plug-ins are disabled by default; system-level ones must be chosen separately",
+
+        // 操作结果
+        "好": "OK",
+        "恢复": "Restore",
+        "已扫描 %@ 个位置\n": "Scanned %@ location(s)\n",
+        "%@：无访问权限，读不到里面的插件": "%@: no read permission — plug-ins inside cannot be read",
+        "占用 %@": "Using %@",
+        "%@（%@）": "%@ (%@)",
+        "%@：%@": "%@: %@",
+        "# %@：保留应用内副本，删除系统目录原文件\nsudo rm -rf %@\nsudo chown -R %@:%@ %@":
+            "# %@: keep the in-app copy, delete the original in the system folder\nsudo rm -rf %@\nsudo chown -R %@:%@ %@",
+        "# %@：把系统目录里的插件移进应用禁用目录\nsudo mkdir -p %@\nsudo mv %@ %@\nsudo chown -R %@:%@ %@":
+            "# %@: move the plug-in from the system folder into the app's disabled folder\nsudo mkdir -p %@\nsudo mv %@ %@\nsudo chown -R %@:%@ %@",
+        "# %@：放回系统目录\nsudo mkdir -p %@\nsudo mv %@ %@\nsudo rm -rf %@":
+            "# %@: put it back into the system folder\nsudo mkdir -p %@\nsudo mv %@ %@\nsudo rm -rf %@",
+        "Final Cut Pro 正在运行，退出并重新打开后才会生效。":
+            "Final Cut Pro is running. Changes take effect only after you quit and reopen it.",
+        "重启 Final Cut Pro 后生效": "Takes effect after restarting Final Cut Pro",
+        "没有可停用的插件": "No plug-ins to disable",
+        "这个范围里没有可停用的插件（可能都已停用，或在保护名单里）。":
+            "No plug-ins to disable in this scope (they may all be disabled or protected).",
+        "本工程没用到的插件都已停用，或都在保护名单里。":
+            "Every plug-in this project does not use is already disabled or protected.",
+        "已停用「%@」": "Disabled “%@”",
+        "已停用 %@ 个插件": "Disabled %@ plug-in(s)",
+        "停用本工程未使用的 %@ 个插件": "Disable the %@ plug-ins unused by this project",
+        "已停用 %@ 个本工程未使用的插件（可一键恢复）":
+            "Disabled %@ plug-in(s) unused by this project (one-click restore available)",
+        "已停用 %@ 个本工程未使用的插件。":
+            "Disabled %@ plug-in(s) unused by this project.",
+        "有 %@ 个系统级插件被跳过（本功能不会动系统级）。":
+            "%@ system-level plug-in(s) were skipped (this feature never touches system-level ones).",
+        "已按你的要求停止，剩余插件保持停用状态":
+            "Stopped as requested; the remaining plug-ins stay disabled",
+        "批次恢复结果": "Batch Restore Result",
+        "已启用「%@」": "Enabled “%@”",
+        "删除备份「%@」": "Delete Backup “%@”",
+        "改名失败": "Rename Failed",
+        "自动授权没有完成：%@\n\n可以复制下面的命令手动执行。执行完回到本应用点「复核」。":
+            "Automatic authorization did not complete: %@\n\nYou can copy the command below and run it manually, then come back and click Recheck.",
+        "# 备份：%@\nsudo rm -rf %@": "# Backup: %@\nsudo rm -rf %@",
+        "# 备份：%@\nsudo ditto %@ %@": "# Backup: %@\nsudo ditto %@ %@",
+
+        // 批次
+        "成功 %@": "%@ succeeded",
+        "失败 %@": "%@ failed",
+        "跳过 %@": "%@ skipped",
+        "等待管理员授权": "Waiting for administrator authorization",
+        "找不到对应的停用记录，可能已在别处恢复":
+            "No matching disabled record — it may have been restored elsewhere",
+        "%@：找不到停用记录": "%@: disabled record not found",
+        "正在恢复 %lld 个插件": "Restoring %lld plug-in(s)",
+        "原位置已有同名插件，未覆盖":
+            "A same-name plug-in already exists at the original location (not overwritten)",
+
+        // 工程解析错误
+        "不支持的文件类型：%@。请选择 .fcpxml 或 .fcpbundle。":
+            "Unsupported file type: %@. Choose a .fcpxml or .fcpbundle.",
+        "读不出「%@」的内容。请确认文件没有损坏，或在 Final Cut Pro 里重新导出 XML。":
+            "Could not read “%@”. Check that the file is not damaged, or export XML again from Final Cut Pro.",
+        "这个 .fcpbundle 里没有可直接读取的 XML。请在 Final Cut Pro 里打开该工程，用「文件 → 导出 XML」导出 .fcpxml，再拖进来扫描。":
+            "This .fcpbundle contains no readable XML. Open the project in Final Cut Pro, use File → Export XML to create a .fcpxml, then drop that in to scan.",
+        "无扩展名": "no extension",
+        "这份工程里没有读到任何效果引用，无法判断用到了哪些插件。请确认导出的是 FCPXML（文件 → 导出 XML），而不是只有媒体清单。":
+            "No effect references were found in this project, so the plug-ins in use cannot be determined. Make sure you exported FCPXML (File → Export XML), not just a media list.",
+
+        // 直接读 .fcpbundle
+        "库扫描结果": "Library Scan Result",
+        "只读分析": "Read-only",
+        "整库": "Whole library",
+        "整库「%@」": "Whole library “%@”",
+        "工程「%@」": "Project “%@”",
+        "选中的 %@ 个工程": "%@ selected project(s)",
+        "%@ 个事件": "%@ events",
+        "%@ 个工程": "%@ projects",
+        "%@ 个效果引用": "%@ effect references",
+        "用到 %@ 个": "%@ in use",
+        "未使用（可停用）": "Unused (can be disabled)",
+        "库里用到": "In use in this library",
+        "这个库里没有事件。": "This library has no events.",
+        "这个事件里没有工程": "This event has no projects",
+        "这个库的停用批次": "Disable batches for this library",
+        "库里的插件依赖已自动加入保护名单，批量停用时不会碰它们。":
+            "Plug-ins used by this library were added to the protected list and will not be touched by batch disable.",
+        "整库用到 %@ 个插件，已自动进保护名单。":
+            "%@ plug-in(s) are used by the whole library and were added to the protected list.",
+        "已选 %@，用到 %@ 个插件，已自动进保护名单。":
+            "Selected %@; %@ plug-in(s) in use were added to the protected list.",
+        "选中的范围里没有读到任何效果引用，无法判断用到了哪些插件。为避免误停用，本次不提供停用操作。":
+            "No effect references were found in the selected scope, so plug-in usage is unknown. Disabling is unavailable to avoid mistakes.",
+        "选中的范围里有工程读不完整，无法判断它用到的插件。为避免误停用，请先检查这些工程，或改用 XML 导出。":
+            "Some selected projects could not be read completely, so their plug-in usage is unknown. To avoid disabling something in use, check those projects or use XML export.",
+        "库正在 FCP 中使用，已按只读分析。建议先退出 Final Cut Pro，再执行停用。":
+            "The library is in use by Final Cut Pro and was analyzed read-only. Quit Final Cut Pro before disabling plug-ins.",
+        "检测到库里有 .lock 标记%@，可能是上次未正常退出留下的。已按只读分析，不会改动原库。":
+            "A .lock marker was found%@, possibly left by an unclean exit. The library was analyzed read-only and was not modified.",
+        "（记录来自 %@ / %@）": " (recorded by %@ / %@)",
+        "这个库的格式本工具还读不懂（%@）。请在 Final Cut Pro 里打开该库，用「文件 → 导出 XML」导出 .fcpxml，再拖进来扫描。":
+            "This app cannot read this library format yet (%@). Open the library in Final Cut Pro, use File → Export XML to create a .fcpxml, then drop that in to scan.",
+        "找不到 CurrentVersion.flexolibrary，这可能不是 Final Cut Pro 资源库":
+            "CurrentVersion.flexolibrary was not found; this may not be a Final Cut Pro library",
+        "资源库版本 %@ 不在支持范围": "Library version %@ is not supported",
+        "没有找到任何事件或工程": "No events or projects were found",
+        "复制库索引 CurrentVersion.flexolibrary 失败":
+            "Failed to copy the library index CurrentVersion.flexolibrary",
+        "库索引里没有 ZCOLLECTION 表": "The library index has no ZCOLLECTION table",
+        "库索引数据库打不开：%@": "Could not open the library index database: %@",
+        "事件「%@」的数据库读不出来：%@": "Could not read the database for event “%@”: %@",
+        "工程「%@」没有 CurrentVersion.fcpevent": "Project “%@” has no CurrentVersion.fcpevent",
+        "工程「%@」的数据库是空的": "The database for project “%@” is empty",
+        "工程「%@」有内容解析失败": "Project “%@” has content that could not be parsed",
+        "工程「%@」的数据库读不出来：%@": "Could not read the database for project “%@”: %@",
+        "%@ 里没有 ZCOLLECTION 表": "%@ has no ZCOLLECTION table",
+        "以只读方式打开失败：%@": "Failed to open read-only: %@",
+        "查询失败：%@": "Query failed: %@",
+        "读取失败：%@": "Read failed: %@",
+        "不是二进制 plist": "Not a binary plist",
+        "二进制 plist 尾部信息不完整": "Binary plist trailer is incomplete",
+        "对象引用越界": "Object reference out of bounds",
+        "对象偏移越界": "Object offset out of bounds",
+        "数据段越界": "Data block out of bounds",
+        "字符串越界": "String out of bounds",
+        "UTF-16 字符串越界": "UTF-16 string out of bounds",
+        "数组越界": "Array out of bounds",
+        "字典越界": "Dictionary out of bounds",
+        "整数宽度不对": "Unsupported integer width",
+        "未知的 plist 对象类型：%d": "Unknown plist object type: %d",
+        "长度字段越界": "Length field out of bounds",
+        "长度字段格式不对": "Malformed length field",
+        "停用未使用的插件": "Disable Unused Plug-ins",
+        "停用「%@」未使用的 %@ 个插件": "Disable unused plug-in(s) in “%@”: %@",
+        "\n\n将停用未使用的 %@ 个插件：": "\n\nWill disable %@ unused plug-in(s):",
+        "已停用 %@ 个未使用的插件（可一键恢复）":
+            "Disabled %@ unused plug-in(s) (one-click restore available)",
+        "已停用 %@ 个未使用的插件。": "Disabled %@ unused plug-in(s).",
+        "没用到的插件都已停用，或都在保护名单里。":
+            "All unused plug-ins are already disabled or protected.",
+        "选择 XML 文件…": "Choose XML File…"
     ]
 }
 

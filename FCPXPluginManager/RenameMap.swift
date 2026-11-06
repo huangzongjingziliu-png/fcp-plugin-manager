@@ -127,7 +127,7 @@ enum RenameMapParser {
 
             let delimiter: Character = line.contains("\t") ? "\t"
                 : (line.contains(";") ? ";" : ",")
-            var cells = splitCSVLine(line, delimiter: delimiter)
+            let cells = splitCSVLine(line, delimiter: delimiter)
                 .map { $0.trimmingCharacters(in: .whitespaces) }
 
             // 去掉 Excel 导出的表头
@@ -321,7 +321,7 @@ extension PluginViewModel {
         for item in plan.items {
             switch item.status {
             case .failed(let reason):
-                outcome.failures.append("\(item.entry.key)：\(reason)")
+                outcome.failures.append(T("%@：%@", item.entry.key, reason))
             case .adminRequired(let command):
                 outcome.adminCommands.append(command)
             case .ready:
@@ -335,7 +335,7 @@ extension PluginViewModel {
                         AdminCommandBuilder.renameCommand(oldPath: oldPath, newPath: newPath)
                     )
                 case .failure(let message):
-                    outcome.failures.append("\(plugin.name)：\(message)")
+                    outcome.failures.append(T("%@：%@", plugin.name, message))
                 }
             }
         }

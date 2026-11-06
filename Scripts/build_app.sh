@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="FCP 插件管理"
 BUNDLE_ID="com.huangzongjing.fcppluginmanager"
-APP_VERSION="1.5.2"
+APP_VERSION="1.6.5"
 BUILD_VERSION="${BUILD_VERSION:-$(date +%Y%m%d)}"
 EXECUTABLE_NAME="FCPXPluginManager"
 

@@ -1,6 +1,84 @@
 import Foundation
 import Combine
 import AppKit
+import Security
+
+// MARK: - Plugin Origin
+
+/// 插件来源：只看「谁做的」，不看装在哪。
+/// Apple 自带 = 包标识属于 Apple 或由 Apple 签名；
+/// 第三方 = 有包标识或能读到签名，但不是 Apple；
+/// 来源未知 = 读不到包标识也读不到签名（多为第三方装的模板目录）。
+/// 安装位置另算：/Library 是「所有用户安装」，用户目录是「仅当前用户安装」。
+enum PluginOrigin: String, Codable {
+    case apple
+    case thirdParty
+    case unknown
+
+    /// 完整名称，详情页和提示用
+    var displayName: String {
+        switch self {
+        case .apple: return T("Apple 自带")
+        case .thirdParty: return T("第三方")
+        case .unknown: return T("来源未知")
+        }
+    }
+
+    /// 列表里的一列，尽量短
+    var shortLabel: String {
+        switch self {
+        case .apple: return T("Apple")
+        case .thirdParty: return T("第三方")
+        case .unknown: return T("未知")
+        }
+    }
+
+    /// 「一键禁用第三方」是否包含它。Apple 自带默认排除；
+    /// 来源未知按第三方处理（多为第三方装的模板，且随时可一键恢复）。
+    var participatesInThirdPartyDisable: Bool { self != .apple }
+}
+
+enum PluginOriginDetector {
+    /// 判断来源。拿不到任何信息就返回 .unknown，绝不按安装位置猜。
+    static func detect(at url: URL, bundleIdentifier: String?) -> PluginOrigin {
+        if let bundleIdentifier, bundleIdentifier.lowercased().hasPrefix("com.apple.") {
+            return .apple
+        }
+        if let signer = signingIdentity(at: url) {
+            return signer ? .apple : .thirdParty
+        }
+        // 没签名但包里有明确的包标识，说明是某个厂商的插件
+        if bundleIdentifier != nil { return .thirdParty }
+        return .unknown
+    }
+
+    /// 读代码签名：true = Apple 签名，false = 其它签名，nil = 读不到/未签名。
+    /// 只认签名链最前面那张（叶子证书），证书链里的 "Apple Root CA" 每张签名都有，不能拿它判断。
+    private static func signingIdentity(at url: URL) -> Bool? {
+        var staticCode: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(url as CFURL, [], &staticCode) == errSecSuccess,
+              let staticCode else { return nil }
+
+        var information: CFDictionary?
+        guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
+              let info = information as? [String: Any] else { return nil }
+
+        let certificates = info[kSecCodeInfoCertificates as String] as? [SecCertificate] ?? []
+        if let leaf = certificates.first,
+           let summary = SecCertificateCopySubjectSummary(leaf) as String? {
+            let lower = summary.lowercased()
+            if lower.contains("software signing") || lower.contains("apple mac os application signing") {
+                return true
+            }
+            if lower.contains("developer id") { return false }
+        }
+        if let team = info[kSecCodeInfoTeamIdentifier as String] as? String, !team.isEmpty {
+            return team == "Apple"
+        }
+        // 有签名信息但都认不出来：算第三方，因为 Apple 的插件一定有 com.apple.* 标识
+        return certificates.isEmpty ? nil : false
+    }
+}
 
 // MARK: - Plugin Item
 
@@ -9,7 +87,11 @@ struct PluginItem: Identifiable, Equatable {
     let path: String
     let category: PluginCategory
     let source: PluginSource
+    /// 安装范围：true = 所有用户安装（/Library），false = 仅当前用户安装。
+    /// 只决定写文件要不要管理员密码，不参与「是不是系统插件」的判断。
     let isSystemLevel: Bool
+    /// 来源：Apple 自带 / 第三方 / 来源未知
+    let origin: PluginOrigin
     /// 从插件包 Info.plist 读到的版本号，模板包通常没有
     let version: String?
     /// 版权/厂商信息，能读到就显示
@@ -27,6 +109,11 @@ struct PluginItem: Identifiable, Equatable {
 
     /// 界面显示用；shortLocation 仍作为内部标识，不跟语言变
     var localizedLocation: String { source.localizedLocation }
+
+    /// 安装范围：说清「装给谁用」，不再用「系统级/用户级」
+    var installScopeDescription: String {
+        isSystemLevel ? T("所有用户安装") : T("仅当前用户安装")
+    }
 
     var sizeDescription: String? {
         guard let sizeBytes else { return nil }
@@ -60,6 +147,7 @@ struct PluginItem: Identifiable, Equatable {
         self.source = source
         self.category = Self.categorize(from: source)
         self.isSystemLevel = source.isSystemLevel
+        self.origin = PluginOriginDetector.detect(at: url, bundleIdentifier: info.bundleIdentifier)
         self.version = info.version
         self.vendor = info.vendor
         self.bundleIdentifier = info.bundleIdentifier
@@ -297,8 +385,22 @@ enum PluginSource: CaseIterable {
         }
     }
 
-    /// 界面显示用的位置名；shortLocation 继续作为内部稳定标识
-    var localizedLocation: String { T(shortLocation) }
+    /// 位置里的分类词（「所有用户 / 效果」的后半截）
+    private var kindName: String {
+        switch self {
+        case .systemEffects, .userEffects: return T("效果")
+        case .systemGenerators, .userGenerators: return T("发生器")
+        case .systemTitles, .userTitles: return T("标题")
+        case .systemTransitions, .userTransitions: return T("转场")
+        case .systemPlugIns, .userPlugIns: return T("插件")
+        }
+    }
+
+    /// 界面显示用的位置名。不用「系统级/用户级」，直接说清装给谁用。
+    /// shortLocation 继续作为内部稳定标识，不参与显示。
+    var localizedLocation: String {
+        T("%@ / %@", isSystemLevel ? T("所有用户") : T("仅当前用户"), kindName)
+    }
 }
 
 extension PluginItem {
@@ -319,6 +421,8 @@ struct ScannedLocation: Identifiable {
     let label: String
     let path: String
     let exists: Bool
+    /// 目录存在但读不了（没权限）时要在界面上说清楚，不能显示成「0 个」
+    let readable: Bool
     let foundCount: Int
 }
 
@@ -366,6 +470,7 @@ struct PluginScanner {
                     label: root.source.localizedLocation,
                     path: root.url.path,
                     exists: exists,
+                    readable: exists && fm.isReadableFile(atPath: root.url.path),
                     foundCount: found.count
                 )
             )
@@ -569,9 +674,11 @@ struct AdminCommandBuilder {
             let payload = quote(item.currentPath)
             let original = quote(item.originalPath)
             if item.hasPayload {
-                return "# \(item.displayName)：保留应用内副本，删除系统目录原文件\nsudo rm -rf \(original)\nsudo chown -R \(uid):\(gid) \(entry)"
+                return T("# %@：保留应用内副本，删除系统目录原文件\nsudo rm -rf %@\nsudo chown -R %@:%@ %@",
+                         item.displayName, original, "\(uid)", "\(gid)", entry)
             }
-            return "# \(item.displayName)：把系统目录里的插件移进应用禁用目录\nsudo mkdir -p \(entry)\nsudo mv \(original) \(payload)\nsudo chown -R \(uid):\(gid) \(entry)"
+            return T("# %@：把系统目录里的插件移进应用禁用目录\nsudo mkdir -p %@\nsudo mv %@ %@\nsudo chown -R %@:%@ %@",
+                     item.displayName, entry, original, payload, "\(uid)", "\(gid)", entry)
         }.joined(separator: "\n\n")
     }
 
@@ -581,7 +688,8 @@ struct AdminCommandBuilder {
             let payload = quote(item.currentPath)
             let original = quote(item.originalPath)
             let parent = quote(URL(fileURLWithPath: item.originalPath).deletingLastPathComponent().path)
-            return "# \(item.displayName)：放回系统目录\nsudo mkdir -p \(parent)\nsudo mv \(payload) \(original)\nsudo rm -rf \(entry)"
+            return T("# %@：放回系统目录\nsudo mkdir -p %@\nsudo mv %@ %@\nsudo rm -rf %@",
+                     item.displayName, parent, payload, original, entry)
         }.joined(separator: "\n\n")
     }
 
@@ -621,6 +729,21 @@ class PluginViewModel: ObservableObject {
     @Published var isScanning = false
     /// 本次扫描覆盖了哪些目录、各找到几个，用于空状态排查
     @Published var scanLocations: [ScannedLocation] = []
+    /// 收藏的插件（路径），永远不参与批量禁用
+    @Published var favorites: Set<String> = []
+    /// 当前扫描工程用到的插件（路径），自动进保护名单
+    @Published var projectProtectedPaths: Set<String> = []
+    /// 最近一次工程扫描结果
+    @Published var projectScan: ProjectScanResult?
+    /// 按工程分批的停用记录（工程 A 一批、工程 B 一批，互不覆盖）
+    @Published var projectBatches: [ProjectBatch] = []
+    /// 禁用目录占用字节数；nil 表示还没算完。大目录枚举放后台，不卡界面。
+    @Published var disabledDirectoryBytes: Int64?
+
+    /// 扫描序号：防止早发起的扫描晚返回，把新结果覆盖掉
+    private var scanGeneration = 0
+    /// 扫描期间又被要求刷新：等这次扫完立刻补一次
+    private var needsRescan = false
 
     private let fm = FileManager.default
     /// 测试时指向临时目录，生产环境为 nil，走 Application Support
@@ -638,6 +761,8 @@ class PluginViewModel: ObservableObject {
         loadDisabled()
         loadOperations()
         loadRenameLedger()
+        loadProtection()
+        loadProjectBatches()
     }
 
     /// 弹出 macOS 标准管理员授权对话框执行命令；用户取消会返回失败。
@@ -672,7 +797,15 @@ class PluginViewModel: ObservableObject {
     // MARK: - Scan
 
     func scan() {
+        // 已经在扫就不并发再扫一遍；但记一笔，扫完立刻补一次，
+        // 免得「操作完自动刷新」被这次扫描吞掉、列表停在旧数据上。
+        guard !isScanning else {
+            needsRescan = true
+            return
+        }
         isScanning = true
+        scanGeneration += 1
+        let generation = scanGeneration
 
         Task {
             let report = await Task.detached(priority: .userInitiated) {
@@ -680,8 +813,13 @@ class PluginViewModel: ObservableObject {
             }.value
 
             await MainActor.run { [weak self] in
-                self?.applyScanReport(report)
-                self?.isScanning = false
+                guard let self, self.scanGeneration == generation else { return }
+                self.applyScanReport(report)
+                self.isScanning = false
+                if self.needsRescan {
+                    self.needsRescan = false
+                    self.scan()
+                }
             }
         }
     }
@@ -722,6 +860,7 @@ class PluginViewModel: ObservableObject {
         return supportDir.appendingPathComponent("FCPPluginManager", isDirectory: true)
     }
 
+    @discardableResult
     func ensureDirectory(_ url: URL) -> URL {
         if !fm.fileExists(atPath: url.path) {
             try? fm.createDirectory(at: url, withIntermediateDirectories: true)
@@ -769,6 +908,9 @@ class PluginViewModel: ObservableObject {
 
         let baseName = "\(plugin.name)_\(Self.backupDateFormatter.string(from: date))"
         let backupURL = uniqueURL(in: backupDirectory, baseName: baseName)
+        // 先复制到 .partial，成功后再改名。中途退出 / 拔盘只会留下 .partial，
+        // 启动时统一清掉，不会变成「看不见但占空间」的半截备份。
+        let partialURL = backupURL.appendingPathExtension("partial")
 
         // 复制放后台线程，插件可能有几十 G，不能卡住界面
         let sourcePath = plugin.path
@@ -776,7 +918,7 @@ class PluginViewModel: ObservableObject {
             do {
                 try FileManager.default.copyItem(
                     at: URL(fileURLWithPath: sourcePath),
-                    to: backupURL
+                    to: partialURL
                 )
                 return .success(())
             } catch {
@@ -787,10 +929,16 @@ class PluginViewModel: ObservableObject {
         switch copyResult {
         case .failure(let error):
             // 只清理本次复制出来的半成品，旧备份不受影响
-            try? fm.removeItem(at: backupURL)
+            try? fm.removeItem(at: partialURL)
             return .failure(Self.describe(error))
         case .success:
             break
+        }
+        do {
+            try fm.moveItem(at: partialURL, to: backupURL)
+        } catch {
+            try? fm.removeItem(at: partialURL)
+            return .failure(Self.describe(error))
         }
 
         let backup = BackupItem(
@@ -902,7 +1050,7 @@ class PluginViewModel: ObservableObject {
     /// 把 NSError 的域和错误码一起带上，排障时能看出到底是哪种失败
     nonisolated static func describe(_ error: Error) -> String {
         let ns = error as NSError
-        return "\(ns.localizedDescription)（\(ns.domain) \(ns.code)）"
+        return T("%@（%@）", ns.localizedDescription, "\(ns.domain) \(ns.code)")
     }
 
     nonisolated static func describe(_ message: String) -> String {
@@ -951,6 +1099,12 @@ class PluginViewModel: ObservableObject {
             guard fm.fileExists(atPath: entryURL.path, isDirectory: &isDir),
                   isDir.boolValue,
                   !entryURL.lastPathComponent.hasPrefix(".") else { continue }
+
+            // 上次复制到一半留下的半成品：没有元数据、永远无法恢复，直接清掉
+            if entryURL.lastPathComponent.hasSuffix(".partial") {
+                try? fm.removeItem(at: entryURL)
+                continue
+            }
 
             let metaURL = entryURL.appendingPathComponent(".metadata")
             var category: PluginCategory = .all
@@ -1001,34 +1155,6 @@ class PluginViewModel: ObservableObject {
         let entryURL = uniqueURL(in: disabledDirectory, baseName: baseName)
         let payloadURL = entryURL.appendingPathComponent("Plugin", isDirectory: true)
 
-        do {
-            try fm.createDirectory(at: entryURL, withIntermediateDirectories: true)
-            if !plugin.isSystemLevel {
-                // 用户级：直接移走，立即生效
-                let source = plugin.path
-                let destination = payloadURL
-                let moveResult: Result<Void, Error> = await Task.detached(priority: .userInitiated) {
-                    do {
-                        try FileManager.default.moveItem(
-                            at: URL(fileURLWithPath: source),
-                            to: destination
-                        )
-                        return .success(())
-                    } catch {
-                        return .failure(error)
-                    }
-                }.value
-                if case .failure(let error) = moveResult {
-                    throw error
-                }
-            }
-            // 系统级：这里不复制（插件可能有几十 G），先建记录，
-            // 随后由 applyPendingDisables 用一次管理员授权把原文件移进来。
-        } catch {
-            try? fm.removeItem(at: entryURL)
-            return .failure(Self.describe(error))
-        }
-
         let item = DisabledItem(
             name: plugin.name,
             currentPath: payloadURL.path,
@@ -1039,17 +1165,43 @@ class PluginViewModel: ObservableObject {
             disabledDate: date
         )
 
+        // 顺序很重要：先建目录、先写 .metadata，最后才移动插件本体。
+        // 这样中途崩溃 / 拔盘时，最差也只是留下一条「未生效」记录（原插件还在原位），
+        // 不会出现「插件被搬走了、但没有任何记录」的孤儿状态。
+        do {
+            try fm.createDirectory(at: entryURL, withIntermediateDirectories: true)
+        } catch {
+            return .failure(Self.describe(error))
+        }
         do {
             try writeDisabledMetadata(item)
         } catch {
-            // 没有元数据就无法启用回来，把插件放回原处
-            if plugin.isSystemLevel {
-                try? fm.removeItem(at: entryURL)
-            } else {
-                try? fm.moveItem(at: payloadURL, to: URL(fileURLWithPath: plugin.path))
-            }
+            try? fm.removeItem(at: entryURL)
             return .failure(T("写入禁用信息失败：%@", Self.describe(error)))
         }
+        if !plugin.isSystemLevel {
+            // 用户级：直接移走，立即生效
+            let source = plugin.path
+            let destination = payloadURL
+            let moveResult: Result<Void, Error> = await Task.detached(priority: .userInitiated) {
+                do {
+                    try FileManager.default.moveItem(
+                        at: URL(fileURLWithPath: source),
+                        to: destination
+                    )
+                    return .success(())
+                } catch {
+                    return .failure(error)
+                }
+            }.value
+            if case .failure(let error) = moveResult {
+                // 没搬成：把刚写的记录目录清掉，插件仍在原位
+                try? fm.removeItem(at: entryURL)
+                return .failure(Self.describe(error))
+            }
+        }
+        // 系统级：这里不复制（插件可能有几十 G），只留记录，
+        // 随后由 applyPendingDisables 用一次管理员授权把原文件移进来。
 
         disabledItems.append(item)
         disabledItems.sort { $0.name < $1.name }
@@ -1131,14 +1283,22 @@ class PluginViewModel: ObservableObject {
                 throw error
             }
         } catch {
-            if !targetExistedBefore, fm.fileExists(atPath: originalURL.path) {
-                try? fm.removeItem(at: originalURL)
+            // 只有确认「源文件还在」才允许删目标；否则可能是移动其实已完成（跨卷复制后删源），
+            // 删掉目标就等于把插件的唯一一份删了。
+            let sourceStillThere = fm.fileExists(atPath: item.currentPath)
+            let destinationArrived = fm.fileExists(atPath: originalURL.path)
+
+            if !(!sourceStillThere && destinationArrived) {
+                if sourceStillThere, !targetExistedBefore, destinationArrived {
+                    try? fm.removeItem(at: originalURL)
+                }
+                let reason = Self.describe(error)
+                if item.isSystemLevel && Self.isPermissionError(error) {
+                    return .needAuthentication(reason)
+                }
+                return .failure(reason)
             }
-            let reason = Self.describe(error)
-            if item.isSystemLevel && Self.isPermissionError(error) {
-                return .needAuthentication(reason)
-            }
-            return .failure(reason)
+            // 源已不在、目标已就位：按成功处理，继续往下清记录
         }
 
         do {
@@ -1310,7 +1470,7 @@ class PluginViewModel: ObservableObject {
                 outcome.adminItems.append(item)
                 outcome.adminReasons[item.entryPath] = reason
             case .failure(let message):
-                outcome.failures.append("\(plugin.displayName)：\(message)")
+                outcome.failures.append(T("%@：%@", plugin.displayName, message))
             }
             if !advanceBatch() { break }
         }
@@ -1332,7 +1492,7 @@ class PluginViewModel: ObservableObject {
                 outcome.adminItems.append(item)
                 outcome.adminReasons[item.entryPath] = reason
             case .failure(let message):
-                outcome.failures.append("\(item.displayName)：\(message)")
+                outcome.failures.append(T("%@：%@", item.displayName, message))
             }
             if !advanceBatch() { break }
         }
@@ -1505,6 +1665,35 @@ class PluginViewModel: ObservableObject {
         self.disabledItems = items
     }
 
+    /// 统计禁用目录占用（已停用的插件还占着磁盘，要让用户看得见）。
+    /// 目录可能很大，枚举放后台，算完再回主线程。
+    func refreshDisabledDirectorySize() {
+        let directory = disabledDirectory
+        Task.detached(priority: .utility) { [weak self] in
+            let bytes = Self.directoryAllocatedSize(directory)
+            guard let self else { return }
+            await MainActor.run { self.disabledDirectoryBytes = bytes }
+        }
+    }
+
+    private nonisolated static func directoryAllocatedSize(_ url: URL) -> Int64 {
+        let keys: [URLResourceKey] = [.isRegularFileKey, .totalFileAllocatedSizeKey, .fileAllocatedSizeKey]
+        guard let enumerator = FileManager.default.enumerator(
+            at: url,
+            includingPropertiesForKeys: keys,
+            options: [.skipsHiddenFiles],
+            errorHandler: { _, _ in true }
+        ) else { return 0 }
+
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            guard let values = try? fileURL.resourceValues(forKeys: Set(keys)),
+                  values.isRegularFile == true else { continue }
+            total += Int64(values.totalFileAllocatedSize ?? values.fileAllocatedSize ?? 0)
+        }
+        return total
+    }
+
     // MARK: - Operation Log
 
     var lastUndoableOperation: OperationRecord? {
@@ -1547,9 +1736,9 @@ class PluginViewModel: ObservableObject {
             case .targetExists:
                 outcome.failures.append(T("%@：原始位置已有同名插件，未覆盖", backup.displayName))
             case .needAuthentication(let reason):
-                outcome.needsAuth.append("\(backup.displayName)：\(reason)")
+                outcome.needsAuth.append(T("%@：%@", backup.displayName, reason))
             case .failure(let message):
-                outcome.failures.append("\(backup.displayName)：\(message)")
+                outcome.failures.append(T("%@：%@", backup.displayName, message))
             }
         }
 
@@ -1561,9 +1750,9 @@ class PluginViewModel: ObservableObject {
             case .targetExists:
                 outcome.failures.append(T("%@：原始位置已有同名插件，未覆盖", item.displayName))
             case .needAuthentication(let reason):
-                outcome.needsAuth.append("\(item.displayName)：\(reason)")
+                outcome.needsAuth.append(T("%@：%@", item.displayName, reason))
             case .failure(let message):
-                outcome.failures.append("\(item.displayName)：\(message)")
+                outcome.failures.append(T("%@：%@", item.displayName, message))
             }
         }
 
@@ -1575,9 +1764,9 @@ class PluginViewModel: ObservableObject {
             case .targetExists:
                 outcome.failures.append(T("%@：原名位置已经有同名插件，未覆盖", name))
             case .needAuthentication(let reason):
-                outcome.needsAuth.append("\(name)：\(reason)")
+                outcome.needsAuth.append(T("%@：%@", name, reason))
             case .failure(let message):
-                outcome.failures.append("\(name)：\(message)")
+                outcome.failures.append(T("%@：%@", name, message))
             }
         }
 

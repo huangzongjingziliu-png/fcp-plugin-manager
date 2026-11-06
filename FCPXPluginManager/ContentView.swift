@@ -14,7 +14,7 @@ struct ContentView: View {
     @State private var batchResult: BatchResult?
     // 恢复/启用前的冲突预检：先告诉用户会全部跳过，再让他选
     @State private var conflictChoice: ConflictChoice?
-    // 系统级插件需要管理员密码，给用户一段可复制的命令
+    // 系统命令面板：所有用户安装的插件需要管理员密码，给用户一段可复制的命令
     @State private var showSystemCommandSheet = false
     @State private var systemCommandText = ""
     @State private var systemCommandSummary = ""
@@ -43,6 +43,19 @@ struct ContentView: View {
     // 语言切换：以中文原文为 key，切换后整棵视图重建
     @StateObject private var localization = Localization.shared
     @FocusState private var searchFocused: Bool
+    // 操作后的轻量提示（带撤销）
+    @State private var actionToast: ActionToast?
+    // 工程扫描
+    @State private var showProjectScan = false
+    /// 拖放面板：先拖文件，找不到文件再点「打开工程…」
+    @State private var showProjectScanPanel = false
+    @State private var projectScanError: String?
+    @State private var showDisableUnusedConfirmation = false
+    @State private var isScanningProject = false
+    // 拖文件进来时高亮
+    @State private var isDropTargeted = false
+    // 插件列表的「来源 / 安装范围」筛选
+    @State private var pluginFilter: PluginFilter = .all
 
     // 选中状态：插件用路径作为稳定标识，备份/禁用记录用各自目录路径
     @State private var selectedBackupPaths: Set<String> = []
@@ -80,8 +93,8 @@ struct ContentView: View {
             }
         }
         switch catFilter {
-        case .all: return results
-        default: return results.filter { $0.category == catFilter }
+        case .all: return results.filter(pluginFilter.matches)
+        default: return results.filter { $0.category == catFilter && pluginFilter.matches($0) }
         }
     }
 
@@ -146,7 +159,7 @@ struct ContentView: View {
     }
 
     var disableConfirmTitle: String {
-        pendingDisableCategory == .all ? T("全部禁用") : T("禁用%@", pendingDisableCategory.displayName)
+        pendingDisableCategory == .all ? T("停用第三方插件") : T("停用%@", pendingDisableCategory.displayName)
     }
 
     var enableConfirmTitle: String {
@@ -154,27 +167,34 @@ struct ContentView: View {
     }
 
     var disableAllMessage: String {
-        let items = plugins(in: pendingDisableCategory)
-        guard !items.isEmpty else { return T("「%@」范围里没有可禁用的插件。", disableScopeTitle) }
-
-        let systemCount = items.filter(\.isSystemLevel).count
-        let userCount = items.count - systemCount
-        var text: String
-
-        if pendingDisableCategory == .all {
-            var lines: [String] = []
-            for category in PluginCategory.allCases where category != .all {
-                let group = items.filter { $0.category == category }
-                guard !group.isEmpty else { continue }
-                let sys = group.filter(\.isSystemLevel).count
-                lines.append(T("• %@ %@ 个（系统级 %@ 个）", category.displayName, group.count, sys))
-            }
-            text = T("将暂停使用全部 %@ 个插件：\n%@\n", items.count, lines.joined(separator: "\n"))
-        } else {
-            text = T("将暂停使用「%@」分类的 %@ 个插件：\n• 用户级 %@ 个，直接移入「已禁用」\n• 系统级 %@ 个，复制一份后还需要管理员命令删除原位置\n", pendingDisableCategory.displayName, items.count, userCount, systemCount)
+        let candidates = viewModel.batchDisableCandidates(in: pendingDisableCategory, includeApple: false)
+        let targets = candidates.targets
+        guard !targets.isEmpty else {
+            return T("「%@」范围里没有可停用的插件。\n（Apple 自带 %@ 个默认跳过，受保护 %@ 个）",
+                     disableScopeTitle, candidates.skippedApple, candidates.skippedProtected)
         }
 
-        text += T("\n插件文件不会真正删除，备份不受影响，之后可以按同样的分类一键启用。")
+        let globalCount = targets.filter(\.isSystemLevel).count
+        let userCount = targets.count - globalCount
+        let unknownCount = targets.filter { $0.origin == .unknown }.count
+
+        var text = T("将停用「%@」的 %@ 个插件：", disableScopeTitle, targets.count)
+        for category in PluginCategory.allCases where category != .all {
+            let group = targets.filter { $0.category == category }
+            guard !group.isEmpty else { continue }
+            text += T("\n• %@ %@ 个", category.displayName, group.count)
+        }
+        text += T("\n\n其中所有用户安装 %@ 个（需要管理员授权），仅当前用户安装 %@ 个。", globalCount, userCount)
+        if unknownCount > 0 {
+            text += T("\n有 %@ 个读不到签名信息，来源未知，按第三方插件处理。", unknownCount)
+        }
+        if candidates.skippedApple > 0 {
+            text += T("\n\nApple 自带的 %@ 个已跳过，不会停用。", candidates.skippedApple)
+        }
+        if candidates.skippedProtected > 0 {
+            text += T("\n受保护名单里的 %@ 个已自动跳过（收藏或当前工程正在使用）。", candidates.skippedProtected)
+        }
+        text += T("\n\n插件文件不会真正删除，之后可以一键启用回来。")
         if fcpIsRunning {
             text += T("\n\n检测到 Final Cut Pro 正在运行，建议先退出。")
         }
@@ -185,8 +205,8 @@ struct ContentView: View {
         let items = disabledItems(in: pendingEnableCategory)
         guard !items.isEmpty else { return T("「%@」范围里没有被禁用的插件。", enableScopeTitle) }
 
-        let systemCount = items.filter(\.isSystemLevel).count
-        let userCount = items.count - systemCount
+        let globalCount = items.filter(\.isSystemLevel).count
+        let userCount = items.count - globalCount
         var text: String
 
         if pendingEnableCategory == .all {
@@ -194,13 +214,13 @@ struct ContentView: View {
             for category in PluginCategory.allCases where category != .all {
                 let group = items.filter { $0.category == category }
                 guard !group.isEmpty else { continue }
-                let sys = group.filter(\.isSystemLevel).count
-                lines.append(T("• %@ %@ 个（系统级 %@ 个）", category.displayName, group.count, sys))
+                lines.append(T("• %@ %@ 个", category.displayName, group.count))
             }
             text = T("将恢复启用全部 %@ 个已禁用插件：\n%@\n", items.count, lines.joined(separator: "\n"))
         } else {
-            text = T("将恢复启用「%@」分类的 %@ 个插件：\n• 用户级 %@ 个，直接放回原目录\n• 系统级 %@ 个，需要用管理员命令放回\n", pendingEnableCategory.displayName, items.count, userCount, systemCount)
+            text = T("将恢复启用「%@」分类的 %@ 个插件。", pendingEnableCategory.displayName, items.count)
         }
+        text += T("\n• 仅当前用户安装的 %@ 个，直接放回原目录\n• 所有用户安装的 %@ 个，需要管理员授权才能放回\n", userCount, globalCount)
 
         let redundant = items.filter { $0.hasPayload && $0.originalExists }.count
         if redundant > 0 {
@@ -216,6 +236,120 @@ struct ContentView: View {
     var undoMessage: String {
         guard let record = viewModel.lastUndoableOperation else { return "" }
         return T("将撤销「%@」这次操作。\n\n能恢复的先恢复，遇到同名插件会跳过并且不覆盖。", record.summary)
+    }
+
+    // MARK: - 工程扫描相关
+
+    /// 当前扫描工程的历史停用批次（新的在前）
+    private var currentProjectBatches: [ProjectBatch] {
+        guard let scan = viewModel.projectScan else { return [] }
+        return viewModel.batches(forProjectPath: scan.fileURL.path)
+    }
+
+    /// Apple 自带插件总数（只做提示，不参与一键禁用）
+    private var applePluginCount: Int {
+        viewModel.plugins.filter { $0.origin == .apple }.count
+    }
+
+    /// 默认「一键全部禁用」会处理的数量（第三方 + 来源未知，不含 Apple 与保护名单）
+    private var thirdPartyDisableCount: Int {
+        viewModel.batchDisableCandidates(in: .all, includeApple: false).targets.count
+    }
+
+    /// 当前工程实际用到的、本机已安装的插件
+    private var projectUsedPlugins: [PluginItem] {
+        guard let scan = viewModel.projectScan else { return [] }
+        return viewModel.plugins.filter { scan.usedPaths.contains($0.path) }
+    }
+
+    /// 本工程没用到的插件（已排除收藏/工程保护）
+    private var projectUnusedCandidates: [PluginItem] {
+        viewModel.projectUnusedCandidates()
+    }
+
+    /// 本工程没用到的 Apple 自带插件：默认不动，只在确认框里告知
+    private var projectAppleSkippedUnused: [PluginItem] {
+        guard let scan = viewModel.projectScan, scan.parsed else { return [] }
+        return viewModel.plugins.filter {
+            !scan.usedPaths.contains($0.path) && $0.origin == .apple
+        }
+    }
+
+    private var disableUnusedAlertTitle: String {
+        viewModel.projectScan?.bundle != nil ? T("停用未使用的插件") : T("停用本工程未使用的插件")
+    }
+
+    private var disableUnusedMessage: String {
+        guard let scan = viewModel.projectScan, scan.parsed else {
+            return T("还没有成功扫描工程，无法判断哪些插件没用到。")
+        }
+        let targets = projectUnusedCandidates
+        guard !targets.isEmpty else {
+            return T("这个工程没用到的插件都已经停用，或都在保护名单里，没有需要处理的。")
+        }
+
+        let scopeText: String
+        if let bundle = scan.bundle {
+            scopeText = bundle.wholeLibrary
+                ? T("整库用到 %@ 个插件，已自动进保护名单。", scan.usedPaths.count)
+                : T("已选 %@，用到 %@ 个插件，已自动进保护名单。", bundle.selectionLabel, scan.usedPaths.count)
+        } else {
+            scopeText = T("工程「%@」依赖的 %@ 个插件已自动进保护名单，不会被停用。", scan.projectName, scan.usedPaths.count)
+        }
+        var text = scopeText
+        text += T("\n\n将停用未使用的 %@ 个插件：", targets.count)
+        for category in PluginCategory.allCases where category != .all {
+            let group = targets.filter { $0.category == category }
+            guard !group.isEmpty else { continue }
+            text += T("\n• %@ %@ 个", category.displayName, group.count)
+        }
+        if !projectAppleSkippedUnused.isEmpty {
+            text += T("\n\n本次不会动 Apple 自带的 %@ 个。", projectAppleSkippedUnused.count)
+        }
+        text += T("\n\n风险提示：只停用「本工程没用到的」插件。若停用工程正在使用的插件，FCP 会提示「缺少效果」，参数也有丢失风险，所以本应用不会那样做。")
+        text += T("\n\n插件文件不会真正删除，之后可以一键启用回来。")
+        if fcpIsRunning {
+            text += T("\n\n检测到 Final Cut Pro 正在运行，建议先退出。")
+        }
+        return text
+    }
+
+    /// 底部轻提示：操作完告诉用户做了什么，并给一个撤销按钮
+    private func actionToastView(_ toast: ActionToast) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+            Text(toast.text)
+                .font(.system(size: 12, weight: .medium))
+                .lineLimit(2)
+            if toast.undoTitle != nil, viewModel.lastUndoableOperation != nil {
+                Button(toast.undoTitle ?? T("撤销")) {
+                    withAnimation(.easeInOut(duration: 0.2)) { actionToast = nil }
+                    undoLastOperation()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .hoverTint(cornerRadius: 6)
+            }
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { actionToast = nil }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(4)
+            }
+            .buttonStyle(.plain)
+            .hoverTint(cornerRadius: 8)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.18)))
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+        .padding(.horizontal, 20)
     }
 
     /// Final Cut Pro 正在运行时提醒先退出，避免改了不生效
@@ -235,7 +369,11 @@ struct ContentView: View {
             return T("点击右下角「刷新」按钮扫描插件")
         }
         let existing = viewModel.scanLocations.filter { $0.exists }
-        var lines = existing.map { T("%@：%@ 个", $0.label, $0.foundCount) }
+        var lines = existing.map { location in
+            location.readable
+                ? T("%@：%@ 个", location.label, location.foundCount)
+                : T("%@：无访问权限，读不到里面的插件", location.label)
+        }
         let missingCount = viewModel.scanLocations.count - existing.count
         if missingCount > 0 {
             lines.append(T("另有 %@ 个常见位置没有对应文件夹", missingCount))
@@ -329,6 +467,14 @@ struct ContentView: View {
             .onChange(of: selectedSidebar) { _, _ in
                 selectedBackupPaths.removeAll()
                 selectedDisabledPaths.removeAll()
+                if isDisabledView {
+                    viewModel.refreshDisabledDirectorySize()
+                }
+            }
+            .onChange(of: viewModel.disabledItems.count) { _, _ in
+                if isDisabledView {
+                    viewModel.refreshDisabledDirectorySize()
+                }
             }
             .task {
                 // 打开就自动扫一次，不用再手动点刷新
@@ -396,9 +542,36 @@ struct ContentView: View {
             bottomBar
         }
         .frame(minWidth: 1080, minHeight: 520)
+        .overlay {
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [8]))
+                    .padding(6)
+                    .allowsHitTesting(false)
+            }
+        }
+        .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
+            handleProjectDrop(providers)
+        }
         .overlay(alignment: .bottom) {
-            if let progress = viewModel.batchProgress {
-                batchProgressBar(progress)
+            VStack(spacing: 8) {
+                if let toast = actionToast {
+                    actionToastView(toast)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                if let progress = viewModel.batchProgress {
+                    batchProgressBar(progress)
+                }
+            }
+            .padding(.bottom, 56)
+            .animation(.easeInOut(duration: 0.2), value: actionToast?.id)
+        }
+        // 轻提示自动消失，避免一直挡在底部
+        .task(id: actionToast?.id) {
+            guard let current = actionToast?.id else { return }
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            if actionToast?.id == current {
+                withAnimation(.easeInOut(duration: 0.2)) { actionToast = nil }
             }
         }
         .alert(T("确认删除"), isPresented: $showTrashConfirmation) {
@@ -433,6 +606,62 @@ struct ContentView: View {
         } message: {
             Text(undoMessage)
         }
+        .alert(disableUnusedAlertTitle, isPresented: $showDisableUnusedConfirmation) {
+            Button(T("取消"), role: .cancel) {}
+            Button(T("停用 %@ 个", projectUnusedCandidates.count), role: .destructive) {
+                disableProjectUnusedPlugins()
+            }
+        } message: {
+            Text(disableUnusedMessage)
+        }
+        .sheet(isPresented: $showProjectScanPanel) {
+            ProjectScanDropPanel { url in
+                acceptProjectFile(url)
+            }
+        }
+        .sheet(isPresented: $showProjectScan) {
+            if let bundle = viewModel.projectScan?.bundle {
+                LibraryScanSheet(
+                    result: viewModel.projectScan,
+                    bundle: bundle,
+                    usedPlugins: projectUsedPlugins,
+                    unusedPlugins: projectUnusedCandidates,
+                    appleSkipped: projectAppleSkippedUnused.count,
+                    unmatched: viewModel.projectScan?.unmatched ?? [],
+                    batches: currentProjectBatches,
+                    onSetWholeLibrary: { viewModel.setBundleWholeLibrary($0) },
+                    onToggleProject: { viewModel.toggleBundleProject($0) },
+                    onRestoreBatch: { restoreBatch($0) },
+                    onDisableUnused: {
+                        showProjectScan = false
+                        showDisableUnusedConfirmation = true
+                    }
+                )
+            } else {
+                ProjectScanSheet(
+                    result: viewModel.projectScan,
+                    usedPlugins: projectUsedPlugins,
+                    unusedPlugins: projectUnusedCandidates,
+                    appleSkipped: projectAppleSkippedUnused.count,
+                    unmatched: viewModel.projectScan?.unmatched ?? [],
+                    batches: currentProjectBatches,
+                    onRestoreBatch: { restoreBatch($0) },
+                    onDisableUnused: {
+                        showProjectScan = false
+                        showDisableUnusedConfirmation = true
+                    }
+                )
+            }
+        }
+        .alert(T("工程扫描失败"), isPresented: Binding(
+            get: { projectScanError != nil },
+            set: { if !$0 { projectScanError = nil } }
+        )) {
+            Button(T("选择 XML 文件…")) { chooseXMLFile() }
+            Button(T("好"), role: .cancel) { projectScanError = nil }
+        } message: {
+            Text(projectScanError ?? "")
+        }
     }
 
     // MARK: - Header
@@ -466,6 +695,7 @@ struct ContentView: View {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(.secondary)
                     }
+                    .hoverTint(cornerRadius: 8)
                 }
             }
             .padding(8)
@@ -475,6 +705,63 @@ struct ContentView: View {
                 Button("") { searchFocused = true }
                     .keyboardShortcut("f", modifiers: .command)
                     .opacity(0)
+            }
+
+            Divider()
+                .frame(height: 24)
+
+            // 工程扫描：点开拖放面板，把文件拖进去是最快的方式
+            Button {
+                showProjectScanPanel = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: viewModel.projectScan?.parsed == true ? "doc.text.magnifyingglass" : "doc.badge.plus")
+                    Text(viewModel.projectScan?.parsed == true ? T("工程：%@", viewModel.projectScan?.projectName ?? "") : T("扫描工程"))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: 180, alignment: .leading)
+                }
+                .font(.subheadline)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(
+                    (viewModel.projectScan?.parsed == true ? Color.accentColor : Color(.controlBackgroundColor)).opacity(viewModel.projectScan?.parsed == true ? 0.15 : 1),
+                    in: Capsule()
+                )
+            }
+            .disabled(isScanningProject)
+            .hoverBrighten(isEnabled: !isScanningProject)
+            .help(T("选择或拖入 .fcpxml 工程文件或 .fcpbundle 库，扫描它实际用到的插件"))
+
+            if viewModel.projectScan?.parsed == true {
+                Button {
+                    showProjectScan = true
+                } label: {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 13))
+                }
+                .buttonStyle(.borderless)
+                .hoverTint(cornerRadius: 5)
+                .help(T("查看上次工程扫描结果"))
+            }
+
+            // 已经为这个工程停用过插件：给一个显眼的一键恢复入口
+            if let pending = viewModel.latestPendingBatchForCurrentProject {
+                Button {
+                    restoreBatch(pending)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.uturn.backward.circle")
+                        Text(T("恢复本工程 %@ 个", pending.pendingCount))
+                    }
+                    .font(.subheadline)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.green.opacity(0.16), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .hoverBrighten()
+                .help(T("只恢复为这个工程停用的这一批插件"))
             }
 
             Divider()
@@ -491,6 +778,7 @@ struct ContentView: View {
                 .background(Color(.controlBackgroundColor), in: Capsule())
             }
             .disabled(!isBackupView && selectedPluginCount > 0)
+            .hoverBrighten(isEnabled: isBackupView || selectedPluginCount == 0)
             .keyboardShortcut("r", modifiers: .command)
 
             Menu {
@@ -523,13 +811,14 @@ struct ContentView: View {
             }
             .menuStyle(.borderlessButton)
             .frame(width: 32)
+            .hoverTint(cornerRadius: 6)
             .help(T("更多操作"))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
     }
 
-    /// 顶部红色横幅：一眼看出「还没真正停用」，并按系统级 / 用户级分别说明
+    /// 顶部红色横幅：一眼看出「还没真正停用」，并按安装范围分别说明
     private var pendingBanner: some View {
         let pending = pendingDisabledItems
         let systemPending = pending.filter { !$0.isRecordIncomplete && $0.isSystemLevel }
@@ -545,12 +834,12 @@ struct ContentView: View {
                      : T("还有 %@ 个插件没有真正停用", pending.count))
                     .font(.system(size: 13, weight: .semibold))
                 if !systemPending.isEmpty {
-                    Text(T("• 系统级 %@ 个：原文件还在系统目录，Final Cut Pro 会照常加载；输入管理员密码后才会真正移走。", systemPending.count))
+                    Text(T("• 所有用户安装的 %@ 个：原文件还在系统目录，Final Cut Pro 会照常加载；输入管理员密码后才会真正移走。", systemPending.count))
                         .font(.caption)
                         .opacity(0.92)
                 }
                 if !userPending.isEmpty {
-                    Text(T("• 用户级 %@ 个：插件仍在原目录（旧版本留下的多余副本），不需要管理员密码，去「已禁用」页处理即可。", userPending.count))
+                    Text(T("• 仅当前用户安装的 %@ 个：插件仍在原目录（旧版本留下的多余副本），不需要管理员密码，去「已禁用」页处理即可。", userPending.count))
                         .font(.caption)
                         .opacity(0.92)
                 }
@@ -627,6 +916,7 @@ struct ContentView: View {
                         .font(.caption)
                         .fontWeight(.semibold)
                         .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 12)
                     sidebarButton(.backups)
                     sidebarButton(.disabled)
@@ -780,6 +1070,7 @@ struct ContentView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .contentShape(RoundedRectangle(cornerRadius: 6))
+        .hoverTint(cornerRadius: 6)
         .onTapGesture {
             withAnimation(.easeInOut(duration: 0.15)) {
                 selectedSidebar = item
@@ -799,6 +1090,7 @@ struct ContentView: View {
                         .foregroundStyle(allSelected ? Color.accentColor : .secondary)
                 }
                 .buttonStyle(.plain)
+                .hoverTint(cornerRadius: 4)
                 .keyboardShortcut("a", modifiers: .command)
                 .help(Text(T("全选")))
 
@@ -812,11 +1104,26 @@ struct ContentView: View {
                     .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
                     .frame(width: 78, alignment: .leading)
-                Text(T("来源"))
+                Menu {
+                    Picker(T("筛选"), selection: $pluginFilter) {
+                        ForEach(PluginFilter.allCases) { filter in
+                            Text(filter.title).tag(filter)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 2) {
+                        Text(T("来源"))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8))
+                    }
                     .font(.caption)
                     .fontWeight(.semibold)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 52, alignment: .leading)
+                    .foregroundStyle(pluginFilter == .all ? Color.secondary : Color.accentColor)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .frame(width: 62, alignment: .leading)
+                .help(T("按来源或安装范围筛选；「一键全部禁用」默认不含 Apple 自带"))
                 Text(T("状态"))
                     .font(.caption)
                     .fontWeight(.semibold)
@@ -890,6 +1197,8 @@ struct ContentView: View {
     private func pluginRow(_ plugin: PluginItem) -> some View {
         let isSelected = viewModel.selectedPluginIDs.contains(plugin.path)
         let pendingDisabled = viewModel.disabledItems.first { $0.originalPath == plugin.path }
+        let isFavorite = viewModel.isFavorite(plugin)
+        let isProjectProtected = viewModel.isProjectProtected(plugin)
 
         return HStack(spacing: 8) {
             Button {
@@ -903,11 +1212,27 @@ struct ContentView: View {
                     .symbolEffect(.bounce, value: isSelected)
             }
             .buttonStyle(.plain)
+            .hoverTint(cornerRadius: 4)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(plugin.displayName)
-                    .font(.system(size: 13, weight: .medium))
-                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(plugin.displayName)
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+
+                    if isFavorite {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.yellow)
+                            .help(Text(T("已收藏，永不参与批量停用")))
+                    }
+                    if isProjectProtected {
+                        Image(systemName: "shield.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.blue)
+                            .help(Text(T("当前扫描的工程正在使用，已自动保护")))
+                    }
+                }
 
                 let meta = [plugin.version.map { "v\($0)" }, plugin.vendor]
                     .compactMap { $0 }
@@ -928,10 +1253,13 @@ struct ContentView: View {
                 .lineLimit(1)
                 .frame(width: 78, alignment: .leading)
 
-            Text(plugin.isSystemLevel ? T("系统") : T("用户"))
+            // 来源列：只看谁做的，不看装在哪（装在哪在详情页和筛选里看）
+            Text(plugin.origin.shortLabel)
                 .font(.system(size: 11))
-                .foregroundStyle(plugin.isSystemLevel ? Color.orange : Color.secondary)
-                .frame(width: 52, alignment: .leading)
+                .foregroundStyle(plugin.origin == .apple ? Color.orange : Color.secondary)
+                .lineLimit(1)
+                .frame(width: 62, alignment: .leading)
+                .help(Text(T("%@ · %@", plugin.origin.displayName, plugin.installScopeDescription)))
 
             statusLabel(for: plugin, pending: pendingDisabled)
                 .frame(width: 120, alignment: .leading)
@@ -942,6 +1270,37 @@ struct ContentView: View {
                 .lineLimit(1)
                 .frame(width: 64, alignment: .trailing)
 
+            // 收藏：进了收藏就永不参与批量停用
+            Button {
+                viewModel.toggleFavorite(plugin)
+            } label: {
+                Image(systemName: isFavorite ? "star.fill" : "star")
+                    .font(.caption)
+                    .foregroundStyle(isFavorite ? Color.yellow : Color.secondary)
+            }
+            .buttonStyle(.plain)
+            .frame(width: 20)
+            .hoverTint(cornerRadius: 4)
+            .help(isFavorite ? Text(T("取消收藏")) : Text(T("收藏（永不参与批量停用）")))
+
+            // 行内电源开关：点一下就是停用 / 启用，不会先选中这一行
+            Button {
+                togglePower(for: plugin, pendingDisabled: pendingDisabled)
+            } label: {
+                Image(systemName: pendingDisabled == nil ? "power" : "power.circle.fill")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(pendingDisabled == nil ? Color.green : Color.orange)
+                    .padding(5)
+                    .background(
+                        (pendingDisabled == nil ? Color.green : Color.orange).opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 5)
+                    )
+            }
+            .buttonStyle(.plain)
+            .hoverBrighten(isEnabled: pendingDisabled?.isRecordIncomplete != true)
+            .help(pendingDisabled == nil ? Text(T("停用这个插件")) : Text(T("启用这个插件")))
+            .disabled(pendingDisabled != nil && pendingDisabled?.isRecordIncomplete == true)
+
             Button {
                 detailPlugin = plugin
             } label: {
@@ -951,6 +1310,7 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             .frame(width: 20)
+            .hoverTint(cornerRadius: 4)
             .help(Text(T("查看插件详情")))
         }
         .padding(.horizontal, 12)
@@ -960,6 +1320,14 @@ struct ContentView: View {
                 ? Color(.highlightColor).opacity(0.3)
                 : Color.clear
         )
+        .contentShape(Rectangle())
+        .hoverTint(cornerRadius: 6)
+        // 点行本身只负责选中，不触发停用，避免误触
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                toggleSelection(for: plugin.path)
+            }
+        }
         .contextMenu {
             Button(T("查看详情")) {
                 detailPlugin = plugin
@@ -970,9 +1338,19 @@ struct ContentView: View {
             Button(T("显示在访达中")) {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: plugin.path)])
             }
+            Button(isFavorite ? T("取消收藏") : T("收藏（永不参与批量停用）")) {
+                viewModel.toggleFavorite(plugin)
+            }
             Divider()
-            Button(pendingDisabled == nil ? T("禁用（暂停使用）") : T("重新执行停用")) {
-                disableSingle(plugin)
+            if let pendingDisabled {
+                Button(T("启用（恢复使用）")) {
+                    enableSingle(pendingDisabled)
+                }
+                .disabled(pendingDisabled.isRecordIncomplete)
+            } else {
+                Button(T("禁用（暂停使用）")) {
+                    disableSingle(plugin)
+                }
             }
             Divider()
             Button(T("备份并删除…")) {
@@ -980,6 +1358,16 @@ struct ContentView: View {
                 showTrashConfirmation = true
             }
             .foregroundStyle(.red)
+        }
+    }
+
+    /// 行内电源开关：已停用就启用，否则停用
+    private func togglePower(for plugin: PluginItem, pendingDisabled: DisabledItem?) {
+        if let pendingDisabled {
+            guard !pendingDisabled.isRecordIncomplete else { return }
+            enableSingle(pendingDisabled)
+        } else {
+            disableSingle(plugin)
         }
     }
 
@@ -1050,6 +1438,7 @@ struct ContentView: View {
                     .symbolEffect(.bounce, value: isSelected)
             }
             .buttonStyle(.plain)
+            .hoverTint(cornerRadius: 4)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(backup.displayName)
@@ -1057,7 +1446,7 @@ struct ContentView: View {
                     .lineLimit(1)
                 HStack(spacing: 6) {
                     if backup.isSystemLevel {
-                        Text(T("系统级"))
+                        Text(T("所有用户安装"))
                             .font(.caption2)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1)
@@ -1088,6 +1477,7 @@ struct ContentView: View {
                         .foregroundStyle(.green)
                 }
                 .buttonStyle(.plain)
+                .hoverBrighten()
                 .help(Text(T("恢复到原始位置")))
 
                 Button {
@@ -1100,6 +1490,7 @@ struct ContentView: View {
                         .foregroundStyle(.red)
                 }
                 .buttonStyle(.plain)
+                .hoverBrighten(danger: true)
                 .help(Text(T("删除备份")))
             }
         }
@@ -1149,6 +1540,11 @@ struct ContentView: View {
                     .font(.caption)
                     .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
+                if let bytes = viewModel.disabledDirectoryBytes, bytes > 0 {
+                    Text(T("占用 %@", ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 Text(T("操作"))
                     .font(.caption)
@@ -1205,6 +1601,7 @@ struct ContentView: View {
                     .symbolEffect(.bounce, value: isSelected)
             }
             .buttonStyle(.plain)
+            .hoverTint(cornerRadius: 4)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.displayName)
@@ -1213,7 +1610,7 @@ struct ContentView: View {
 
                 HStack(spacing: 6) {
                     if item.isSystemLevel {
-                        Text(T("系统级"))
+                        Text(T("所有用户安装"))
                             .font(.caption2)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1)
@@ -1258,14 +1655,15 @@ struct ContentView: View {
                 Button {
                     enableSingle(item)
                 } label: {
-                    Image(systemName: "play.circle")
-                        .font(.caption)
+                    Image(systemName: "power.circle.fill")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.orange)
                         .padding(5)
-                        .background(Color.green.opacity(0.15), in: RoundedRectangle(cornerRadius: 5))
-                        .foregroundStyle(.green)
+                        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 5))
                 }
                 .buttonStyle(.plain)
-                .help(Text(T("启用这个插件")))
+                .hoverBrighten()
+                .help(Text(T("启用这个插件（恢复使用）")))
 
                 Button {
                     deleteSingleDisabled(item)
@@ -1277,6 +1675,7 @@ struct ContentView: View {
                         .foregroundStyle(.red)
                 }
                 .buttonStyle(.plain)
+                .hoverBrighten(danger: true)
                 .help(Text(T("删除禁用记录（不会动原始插件）")))
             }
         }
@@ -1314,10 +1713,10 @@ struct ContentView: View {
         }
     }
 
-    /// 按钮主体点一下就是「全部」，旁边的小箭头可以按分类只禁用一类
+    /// 按钮主体点一下就是「全部第三方」，旁边的小箭头可以按分类挑
     private var disableScopeMenu: some View {
         Menu {
-            Button(T("全部类别（%@）", viewModel.plugins.count)) {
+            Button(T("全部第三方插件（%@）", thirdPartyDisableCount)) {
                 pendingDisableCategory = .all
                 showDisableAllConfirmation = true
             }
@@ -1330,6 +1729,12 @@ struct ContentView: View {
                 }
                 .disabled(count == 0)
             }
+            if viewModel.projectScan?.parsed == true {
+                Divider()
+                Button(T("本工程未使用的插件…")) {
+                    showProjectScan = true
+                }
+            }
         } label: {
             Label(T("一键全部禁用"), systemImage: "pause.circle")
                 .font(.subheadline)
@@ -1337,10 +1742,14 @@ struct ContentView: View {
                 .padding(.vertical, 8)
                 .background(Color.orange.opacity(0.85), in: RoundedRectangle(cornerRadius: 8))
                 .foregroundStyle(.white)
+                .hoverBrighten()
         } primaryAction: {
             pendingDisableCategory = .all
             showDisableAllConfirmation = true
         }
+        .help(applePluginCount > 0
+              ? T("默认停用所有第三方插件（含来源未知），Apple 自带的 %@ 个不动", applePluginCount)
+              : T("默认停用所有第三方插件（含来源未知）"))
         .fixedSize()
     }
 
@@ -1367,6 +1776,7 @@ struct ContentView: View {
                 .padding(.vertical, 8)
                 .background(.green, in: RoundedRectangle(cornerRadius: 8))
                 .foregroundStyle(.white)
+                .hoverBrighten()
         } primaryAction: {
             pendingEnableCategory = .all
             showEnableAllConfirmation = true
@@ -1400,6 +1810,8 @@ struct ContentView: View {
                                 .background(.green, in: RoundedRectangle(cornerRadius: 8))
                                 .foregroundStyle(.white)
                         }
+                        .buttonStyle(.plain)
+                        .hoverBrighten()
                     }
 
                     if selectedBackupCount > 0 {
@@ -1413,6 +1825,8 @@ struct ContentView: View {
                                 .background(Color.green.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
                                 .foregroundStyle(.green)
                         }
+                        .buttonStyle(.plain)
+                        .hoverBrighten()
 
                         Button {
                             pendingBackupDeleteSelection = (isBackupView ? filteredBackups : filteredBackupByCategory).filter {
@@ -1478,7 +1892,9 @@ struct ContentView: View {
                                 .background(Color.red.opacity(0.85), in: RoundedRectangle(cornerRadius: 8))
                                 .foregroundStyle(.white)
                         }
+                        .buttonStyle(.plain)
                         .disabled(isApplyingAdmin || actionablePendingItems.isEmpty)
+                        .hoverBrighten(danger: true)
                         .help(actionablePendingItems.isEmpty
                               ? Text(T("原位置未知，无法停用"))
                               : Text(T("立即停用未生效的插件")))
@@ -1495,6 +1911,8 @@ struct ContentView: View {
                                 .background(Color.green.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
                                 .foregroundStyle(.green)
                         }
+                        .buttonStyle(.plain)
+                        .hoverBrighten()
 
                         Button {
                             showDeleteDisabledConfirmation = true
@@ -1532,6 +1950,8 @@ struct ContentView: View {
                             .padding(.vertical, 8)
                             .background(Color(.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
                     }
+                    .buttonStyle(.plain)
+                    .hoverBrighten()
 
                     if viewModel.lastUndoableOperation != nil {
                         Button {
@@ -1544,6 +1964,8 @@ struct ContentView: View {
                                 .background(Color.orange.opacity(0.85), in: RoundedRectangle(cornerRadius: 8))
                                 .foregroundStyle(.white)
                         }
+                        .buttonStyle(.plain)
+                        .hoverBrighten()
                     }
 
                     if !viewModel.disabledItems.isEmpty {
@@ -1661,11 +2083,11 @@ struct ContentView: View {
                     successCount += 1
                     deletedBackups.append(backup)
                 case .backupFailed(let error):
-                    backupFailItems.append("\(plugin.displayName)（\(error)）")
+                    backupFailItems.append(T("%@（%@）", plugin.displayName, error))
                 case .needAuthentication(let backup):
                     authBackups.append(backup)
                 case .trashFailed(let error):
-                    trashFailItems.append("\(plugin.displayName)：\(error)")
+                    trashFailItems.append(T("%@：%@", plugin.displayName, error))
                 }
             }
 
@@ -1685,7 +2107,7 @@ struct ContentView: View {
                 systemCommandText = authBackups.map {
                     T("# 备份：%@\nsudo rm -rf %@", $0.backupPath, AdminCommandBuilder.quote($0.originalPath))
                 }.joined(separator: "\n\n")
-                systemCommandSummary = T("以下 %@ 个系统级插件已经备份好，但删除原位置需要管理员密码。\n\n复制命令到「终端」执行，或按顶部提示处理。执行完点「刷新」复核。", authBackups.count)
+                systemCommandSummary = T("以下 %@ 个插件装在所有用户目录，已经备份好，但删除原位置需要管理员密码。\n\n复制命令到「终端」执行，或按顶部提示处理。执行完点「刷新」复核。", authBackups.count)
                 showSystemCommandSheet = true
             } else {
                 let summary: String
@@ -1713,10 +2135,10 @@ struct ContentView: View {
                     summary: T("停用「%@」", item.displayName),
                     disabled: [item]
                 )
-                showResult(
-                    T("已停用"),
-                    T("「%@」已移出插件目录，Final Cut Pro 不会再加载。", item.displayName),
-                    details: fcpDetails
+                actionToast = ActionToast(
+                    text: T("已停用「%@」", item.displayName),
+                    undoTitle: T("撤销"),
+                    detail: fcpIsRunning ? T("重启 Final Cut Pro 后生效") : nil
                 )
             case .needAuthentication(let item, _):
                 viewModel.addOperation(
@@ -1734,21 +2156,27 @@ struct ContentView: View {
 
     private func disableAllPlugins() {
         let scope = pendingDisableCategory
-        let scopedPlugins = plugins(in: scope)
+        let targets = viewModel.batchDisableCandidates(in: scope, includeApple: false).targets
+        guard !targets.isEmpty else {
+            showResult(T("没有可停用的插件"), T("这个范围里没有可停用的插件（可能都已停用，或在保护名单里）。"))
+            return
+        }
+        let scopeTitle = disableScopeTitle
+
         Task { @MainActor in
-            let outcome = await viewModel.disableAll(scopedPlugins)
+            let outcome = await viewModel.disableAll(targets)
             if !outcome.disabledNames.isEmpty || !outcome.adminItems.isEmpty {
                 viewModel.addOperation(
                     kind: .disablePlugins,
-                    summary: T("一键停用（%@）：立即生效 %@ 个，待授权 %@ 个", disableScopeTitle, outcome.disabledNames.count, outcome.adminItems.count),
+                    summary: T("一键停用（%@）：立即生效 %@ 个，待授权 %@ 个", scopeTitle, outcome.disabledNames.count, outcome.adminItems.count),
                     disabled: outcome.disabledItems + outcome.adminItems
                 )
             }
 
-            var details: [String] = outcome.failures
+            let details: [String] = outcome.failures
             var authorizedCount = 0
 
-            // 系统级插件立刻用一次管理员授权真正移走，避免「看起来禁用了其实没动」
+            // 所有用户安装的插件立刻用一次管理员授权真正移走，避免「看起来禁用了其实没动」
             if !outcome.adminItems.isEmpty {
                 let admin = await viewModel.applyPendingDisables(outcome.adminItems)
                 authorizedCount = admin.succeededCount
@@ -1760,8 +2188,15 @@ struct ContentView: View {
             }
 
             let effectiveNow = outcome.disabledNames.count + authorizedCount
-            if effectiveNow > 0 || outcome.failures.isEmpty {
-                var summary = T("「%@」范围里已真正停用 %@ 个插件。", disableScopeTitle, effectiveNow)
+            // 成功就只用底部轻提示，不再弹结果窗口；有失败才展开明细
+            if effectiveNow > 0 && details.isEmpty && (outcome.adminItems.isEmpty || authorizedCount == outcome.adminItems.count) {
+                actionToast = ActionToast(
+                    text: T("已停用 %@ 个插件", effectiveNow),
+                    undoTitle: T("撤销"),
+                    detail: fcpIsRunning ? T("重启 Final Cut Pro 后生效") : nil
+                )
+            } else if effectiveNow > 0 || outcome.failures.isEmpty {
+                var summary = T("「%@」范围里已真正停用 %@ 个插件。", scopeTitle, effectiveNow)
                 if !outcome.adminItems.isEmpty && authorizedCount < outcome.adminItems.count {
                     summary += T("还有 %@ 个还没生效，见顶部红色提示。", outcome.adminItems.count - authorizedCount)
                 }
@@ -1769,6 +2204,11 @@ struct ContentView: View {
                 if showSystemCommandSheet == false {
                     showResult(T("停用完成"), summary, details: details + fcpDetails, isError: !details.isEmpty)
                 }
+                actionToast = ActionToast(
+                    text: T("已停用 %@ 个插件", effectiveNow),
+                    undoTitle: T("撤销"),
+                    detail: nil
+                )
             } else if showSystemCommandSheet == false {
                 showResult(T("停用失败"), T("没有停用任何插件。"), details: details, isError: true)
             }
@@ -1778,7 +2218,95 @@ struct ContentView: View {
         }
     }
 
-    /// 用管理员授权真正移走系统级插件；取消时给可复制的命令
+    /// 停用「本工程没用到」的插件（Apple 自带与保护名单默认跳过）
+    private func disableProjectUnusedPlugins() {
+        let targets = projectUnusedCandidates
+        guard !targets.isEmpty else {
+            showResult(T("没有可停用的插件"), T("没用到的插件都已停用，或都在保护名单里。"))
+            return
+        }
+        Task { @MainActor in
+            let batchName = viewModel.currentScanBatchName
+            let outcome = await viewModel.disableAll(targets)
+            if !outcome.disabledNames.isEmpty {
+                viewModel.addOperation(
+                    kind: .disablePlugins,
+                    summary: T("停用「%@」未使用的 %@ 个插件", batchName, outcome.disabledNames.count),
+                    disabled: outcome.disabledItems
+                )
+            }
+            var details = outcome.failures
+
+            // 装在 /Library 的第三方插件同样要参与，需要一次管理员授权才真正生效
+            var adminSucceeded: [DisabledItem] = []
+            if !outcome.adminItems.isEmpty {
+                let admin = await viewModel.applyPendingDisables(outcome.adminItems)
+                let entryPaths = Set(outcome.adminItems.map(\.entryPath))
+                adminSucceeded = viewModel.disabledItems.filter {
+                    entryPaths.contains($0.entryPath) && $0.isEffective
+                }
+                if admin.succeededCount < outcome.adminItems.count {
+                    details.append(T("有 %@ 个所有用户安装的插件没有移走（管理员授权未完成）。", outcome.adminItems.count - admin.succeededCount))
+                }
+            }
+
+            // 记成这一工程的批次：以后可以只恢复这一批，不影响别的停用项
+            if let scan = viewModel.projectScan, !(outcome.disabledItems + adminSucceeded).isEmpty {
+                viewModel.recordProjectBatch(
+                    projectName: batchName,
+                    projectPath: scan.fileURL.path,
+                    disabled: outcome.disabledItems + adminSucceeded,
+                    includedSystem: targets.contains(where: \.isSystemLevel)
+                )
+            }
+
+            let count = outcome.disabledNames.count + adminSucceeded.count
+            if count > 0 && details.isEmpty {
+                actionToast = ActionToast(
+                    text: T("已停用 %@ 个未使用的插件（可一键恢复）", count),
+                    undoTitle: T("撤销"),
+                    detail: fcpIsRunning ? T("重启 Final Cut Pro 后生效") : nil
+                )
+            } else if count > 0 {
+                actionToast = ActionToast(text: T("已停用 %@ 个插件", count), undoTitle: T("撤销"), detail: nil)
+                showResult(T("停用完成"), T("已停用 %@ 个未使用的插件。", count), details: details, isError: false)
+            } else {
+                showResult(T("停用失败"), T("没有停用任何插件。"), details: details, isError: true)
+            }
+            viewModel.scan()
+        }
+    }
+
+    /// 只恢复某一批次停用的插件：不碰其它停用项，也不碰手动停用的插件
+    private func restoreBatch(_ batch: ProjectBatch) {
+        // 恢复是一次点击就执行，不再连环确认
+        showProjectScan = false
+        Task { @MainActor in
+            let outcome = await viewModel.restoreProjectBatch(batch.id)
+            viewModel.scan()
+
+            var detail = fcpIsRunning ? T("重启 Final Cut Pro 后生效") : nil
+            if outcome.cancelled {
+                detail = T("已按你的要求停止，剩余插件保持停用状态")
+            }
+            actionToast = ActionToast(
+                text: T("「%@」%@", batch.projectName, outcome.summary),
+                undoTitle: nil,
+                detail: detail
+            )
+
+            if !outcome.failed.isEmpty || !outcome.skipped.isEmpty {
+                showResult(
+                    T("批次恢复结果"),
+                    T("「%@」%@。", batch.projectName, outcome.summary),
+                    details: outcome.notes,
+                    isError: !outcome.failed.isEmpty
+                )
+            }
+        }
+    }
+
+    /// 用管理员授权真正移走所有用户安装的插件；取消时给可复制的命令
     private func applyPendingDisables(_ items: [DisabledItem]) {
         guard !isApplyingAdmin else { return }
         isApplyingAdmin = true
@@ -1788,11 +2316,11 @@ struct ContentView: View {
             if outcome.succeededCount > 0 {
                 viewModel.addOperation(
                     kind: .disablePlugins,
-                    summary: T("真正停用 %@ 个系统级插件", outcome.succeededCount)
+                    summary: T("真正停用 %@ 个所有用户安装的插件", outcome.succeededCount)
                 )
                 showResult(
                     T("已停用"),
-                    T("已把 %@ 个系统级插件移出系统目录。", outcome.succeededCount),
+                    T("已把 %@ 个插件移出系统目录。", outcome.succeededCount),
                     details: fcpDetails
                 )
             } else {
@@ -1806,7 +2334,7 @@ struct ContentView: View {
 
     private func enableSingle(_ item: DisabledItem) {
         Task { @MainActor in
-            await performEnable([item])
+            await performEnable([item], quiet: true)
         }
     }
 
@@ -1826,7 +2354,7 @@ struct ContentView: View {
 
     /// 恢复：先预检冲突，全部冲突时明确告诉用户会全部跳过，让用户选
     @MainActor
-    private func performEnable(_ items: [DisabledItem], overwriteExisting: Bool = false) async {
+    private func performEnable(_ items: [DisabledItem], overwriteExisting: Bool = false, quiet: Bool = false) async {
         guard !items.isEmpty else {
             showResult(T("没有可恢复的插件"), T("没有选中任何插件。"))
             return
@@ -1845,13 +2373,13 @@ struct ContentView: View {
                 enabledCount += 1
             case .successWithWarning(let warning):
                 enabledCount += 1
-                warningItems.append("\(item.displayName)：\(warning)")
+                warningItems.append(T("%@：%@", item.displayName, warning))
             case .targetExists:
                 failures.append(T("%@：原始位置已存在", item.displayName))
             case .needAuthentication:
                 adminItems.append(item)
             case .failure(let error):
-                failures.append("\(item.displayName)：\(error)")
+                failures.append(T("%@：%@", item.displayName, error))
             }
         }
 
@@ -1881,6 +2409,13 @@ struct ContentView: View {
         summary += T("\n重启 Final Cut Pro 后生效。")
         if showSystemCommandSheet {
             systemCommandSummary += "\n\n\(summary)"
+        } else if quiet && totalRestored > 0 && failures.isEmpty && warningItems.isEmpty {
+            // 单个开关点了就恢复，用底部轻提示，不打扰
+            actionToast = ActionToast(
+                text: T("已启用「%@」", items.first?.displayName ?? ""),
+                undoTitle: nil,
+                detail: fcpIsRunning ? T("重启 Final Cut Pro 后生效") : nil
+            )
         } else {
             showResult(
                 totalRestored > 0 ? T("恢复完成") : T("没有恢复"),
@@ -1923,7 +2458,7 @@ struct ContentView: View {
                 case .needAuthentication:
                     failItems.append(T("%@：需要管理员权限", item.displayName))
                 case .failure(let error):
-                    failItems.append("\(item.displayName)：\(error)")
+                    failItems.append(T("%@：%@", item.displayName, error))
                 }
             }
             selectedDisabledPaths.removeAll()
@@ -1934,6 +2469,64 @@ struct ContentView: View {
                 isError: !failItems.isEmpty
             )
         }
+    }
+
+    // MARK: - Project Scan Actions
+
+    /// 校验并开始扫描。返回 nil 表示已接受并开始扫描；返回文字表示类型不对，由面板就地提示。
+    private func acceptProjectFile(_ url: URL) -> String? {
+        let ext = url.pathExtension.lowercased()
+        guard ext == "fcpxml" || ext == "fcpbundle" else {
+            return T("这个类型不支持。请拖入 .fcpxml 工程文件，或 .fcpbundle 库。")
+        }
+        startProjectScan(url)
+        return nil
+    }
+
+    private func startProjectScan(_ url: URL) {
+        let ext = url.pathExtension.lowercased()
+        guard ext == "fcpxml" || ext == "fcpbundle" else {
+            projectScanError = T("请选择 .fcpxml 工程文件或 .fcpbundle 库。你选中的是：%@", url.lastPathComponent)
+            return
+        }
+        isScanningProject = true
+        Task { @MainActor in
+            defer { isScanningProject = false }
+            do {
+                _ = try await viewModel.scanProject(at: url)
+                // 拖放面板刚关掉时关闭动画还没结束，直接再弹一个 sheet 会被系统忽略
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                showProjectScan = true
+            } catch {
+                projectScanError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+        }
+    }
+
+    /// 库读不懂时的兜底：让用户直接选一份导出的 XML
+    private func chooseXMLFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        if let type = UTType(filenameExtension: "fcpxml") {
+            panel.allowedContentTypes = [type]
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        startProjectScan(url)
+    }
+
+    private func handleProjectDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first else { return false }
+        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+            guard let url else { return }
+            Task { @MainActor in
+                if let message = acceptProjectFile(url) {
+                    projectScanError = message
+                }
+            }
+        }
+        return true
     }
 
     // MARK: - Undo / Log
@@ -2021,14 +2614,14 @@ struct ContentView: View {
                 selectedBackupPaths.remove(backup.backupPath)
             case .successWithWarning(let warning):
                 successCount += 1
-                warningItems.append("\(backup.displayName)：\(warning)")
+                warningItems.append(T("%@：%@", backup.displayName, warning))
                 selectedBackupPaths.remove(backup.backupPath)
             case .targetExists:
                 failItems.append(T("%@：目标位置已存在", backup.displayName))
             case .needAuthentication:
                 authBackups.append(backup)
             case .failure(let error):
-                failItems.append("\(backup.displayName)：\(error)")
+                failItems.append(T("%@：%@", backup.displayName, error))
             }
             if !viewModel.advanceBatch() {
                 stopped = true
@@ -2062,7 +2655,7 @@ struct ContentView: View {
                 T("# 备份：%@\nsudo ditto %@ %@", $0.backupPath, AdminCommandBuilder.quote($0.backupPath), AdminCommandBuilder.quote($0.originalPath))
             }.joined(separator: "\n\n")
             systemCommandSummary = (summary.isEmpty ? "" : summary + "\n\n") +
-                T("以下 %@ 个系统级插件需要管理员密码，未恢复。复制命令到「终端」执行，执行完回到本应用点「刷新」。", authBackups.count)
+                T("以下 %@ 个插件装在所有用户目录，需要管理员密码，未恢复。复制命令到「终端」执行，执行完回到本应用点「刷新」。", authBackups.count)
             showSystemCommandSheet = true
         } else {
             showResult(
@@ -2106,7 +2699,7 @@ struct ContentView: View {
                 case .needAuthentication:
                     failItems.append(T("%@：需要管理员权限", backup.displayName))
                 case .failure(let error):
-                    failItems.append("\(backup.displayName)：\(error)")
+                    failItems.append(T("%@：%@", backup.displayName, error))
                 }
             }
             selectedBackupPaths.removeAll()
@@ -2145,7 +2738,7 @@ struct ContentView: View {
 
             case .needAuthentication(let oldPath, let newPath, let reason):
                 systemCommandText = AdminCommandBuilder.renameCommand(oldPath: oldPath, newPath: newPath)
-                systemCommandSummary = T("「%@」是系统级插件，不能在这里直接改名。\n\n原因：%@\n\n复制命令到「终端」执行。执行完回到本应用点「刷新」，列表里应该显示「%@」。\n\n注意：系统级改名无法自动记入日志，也不能用「撤销上一步」改回去，需要手动执行反向命令。", plugin.name, reason, newName)
+                systemCommandSummary = T("「%@」装在所有用户目录，不能在这里直接改名。\n\n原因：%@\n\n复制命令到「终端」执行。执行完回到本应用点「刷新」，列表里应该显示「%@」。\n\n注意：这类改名无法自动记入日志，也不能用「撤销上一步」改回去，需要手动执行反向命令。", plugin.name, reason, newName)
                 showSystemCommandSheet = true
 
             case .failure(let error):
@@ -2185,10 +2778,10 @@ struct ContentView: View {
                     renames: outcome.renames
                 )
             }
-            var details = outcome.failures
+            let details = outcome.failures
             if !outcome.adminCommands.isEmpty {
                 systemCommandText = outcome.adminCommands.joined(separator: "\n")
-                systemCommandSummary = T("系统级插件不能在这里直接改名，下面是可复制的命令：")
+                systemCommandSummary = T("装在所有用户目录的插件不能在这里直接改名，下面是可复制的命令：")
                 showSystemCommandSheet = true
             }
             showResult(
@@ -2209,7 +2802,8 @@ struct ContentView: View {
         case .effects: return "sparkles"
         case .generators: return "film"
         case .transitions: return "arrow.right.arrow.left"
-        case .titles: return "textformat"
+        // 不用 textformat：这个符号会跟系统语言变，中文系统下在英文界面里会画成「格式」
+        case .titles: return "text.bubble"
         case .backups: return "archivebox"
         case .disabled: return "pause.circle"
         }
@@ -2226,7 +2820,9 @@ struct PluginDetailView: View {
         var result: [(String, String)] = [
             (T("名称"), plugin.displayName),
             (T("分类"), plugin.category.displayName),
-            (T("位置"), plugin.shortLocation)
+            (T("来源"), plugin.origin.displayName),
+            (T("安装范围"), plugin.installScopeDescription),
+            (T("安装位置"), plugin.localizedLocation)
         ]
         if let vendor = plugin.vendor {
             result.append((T("厂商/版权"), vendor))
@@ -2346,6 +2942,709 @@ struct OperationLogView: View {
     }
 }
 
+// MARK: - Action Toast（底部轻提示，可撤销）
+
+struct ActionToast: Identifiable, Equatable {
+    let id = UUID()
+    let text: String
+    /// 传 nil 表示这次操作不能撤销（例如「启用」本身）
+    var undoTitle: String?
+    /// 附加说明，比如「重启 FCP 后生效」
+    var detail: String?
+
+    static func == (lhs: ActionToast, rhs: ActionToast) -> Bool { lhs.id == rhs.id }
+}
+
+// MARK: - Project Scan Drop Panel（拖入工程 &= 打开工程）
+
+/// 扫描入口：拖文件是主路径，「打开工程…」只是备用。
+/// 拖进来类型不对时在原地提示，不关面板；拖对了就关面板直接开扫。
+struct ProjectScanDropPanel: View {
+    /// 返回 nil 表示已接受（面板关闭并开始扫描）；返回文字表示类型不对，就地提示
+    let onAccept: (URL) -> String?
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var isTargeted = false
+    @State private var errorMessage: String?
+
+    private let supportedExtensions: Set<String> = ["fcpxml", "fcpbundle"]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .foregroundStyle(.blue)
+                Text(T("扫描工程"))
+                    .font(.headline)
+                Spacer()
+            }
+
+            dropZone
+                .frame(height: 200)
+
+            Text(T("支持 .fcpxml 工程和 .fcpbundle 库。库会先复制到临时目录再只读解析，不会改动原库；只有格式读不懂时才需要导出 XML。"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let errorMessage {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                    Text(errorMessage)
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+            }
+
+            HStack(spacing: 10) {
+                Button(T("打开工程…")) { openProjectPicker() }
+                    .hoverBrighten(cornerRadius: 6)
+                Spacer()
+                Button(T("关闭")) { dismiss() }
+                    .hoverTint(cornerRadius: 6)
+            }
+        }
+        .padding(20)
+        .frame(width: 480)
+    }
+
+    // MARK: 拖放区
+
+    private var dropZone: some View {
+        VStack(spacing: 10) {
+            Image(systemName: isTargeted ? "arrow.down.doc.fill" : "arrow.down.doc")
+                .font(.system(size: 36, weight: .light))
+                .foregroundStyle(isTargeted ? Color.accentColor : Color.secondary)
+            Text(T("把工程文件拖到这里"))
+                .font(.title3.weight(.semibold))
+                .multilineTextAlignment(.center)
+            Text(T("拖 .fcpxml 工程或 .fcpbundle 库进来，或点下面的「打开工程…」"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(isTargeted ? Color.accentColor.opacity(0.12) : Color(.controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(
+                    isTargeted ? Color.accentColor : Color.secondary.opacity(0.45),
+                    style: StrokeStyle(lineWidth: isTargeted ? 2 : 1.5, dash: [7])
+                )
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
+            handleDrop(providers)
+        }
+        .animation(.easeInOut(duration: 0.12), value: isTargeted)
+    }
+
+    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard !providers.isEmpty else { return false }
+        guard providers.count == 1 else {
+            errorMessage = T("只支持单个文件，请一次拖一个进来。")
+            return true
+        }
+        guard let provider = providers.first else { return false }
+
+        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+            DispatchQueue.main.async {
+                guard let url else {
+                    errorMessage = T("这个类型不支持。请拖入 .fcpxml 工程文件，或 .fcpbundle 库。")
+                    return
+                }
+                guard supportedExtensions.contains(url.pathExtension.lowercased()) else {
+                    errorMessage = T("这个类型不支持。请拖入 .fcpxml 工程文件，或 .fcpbundle 库。")
+                    return
+                }
+                if let message = onAccept(url) {
+                    errorMessage = message
+                } else {
+                    dismiss()
+                }
+            }
+        }
+        return true
+    }
+
+    // MARK: 系统文件选择（备用路径）
+
+    private func openProjectPicker() {
+        let panel = NSOpenPanel()
+        panel.title = T("选择工程文件")
+        panel.message = T("选择 .fcpxml 工程文件，或一个 .fcpbundle 库")
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.treatsFilePackagesAsDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        if let message = onAccept(url) {
+            errorMessage = message
+        } else {
+            dismiss()
+        }
+    }
+}
+
+// MARK: - Project Scan Sheet（工程扫描结果）
+
+struct ProjectScanSheet: View {
+    let result: ProjectScanResult?
+    let usedPlugins: [PluginItem]
+    let unusedPlugins: [PluginItem]
+    let appleSkipped: Int
+    let unmatched: [String]
+    /// 这个工程的历史停用批次（新的在前）
+    let batches: [ProjectBatch]
+    let onRestoreBatch: (ProjectBatch) -> Void
+    let onDisableUnused: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    /// 最近一批还没恢复完的（「恢复本次停用的」按钮就针对它）
+    private var pendingBatch: ProjectBatch? {
+        batches.first(where: \.hasPending)
+    }
+
+    private var unusedByCategory: [(PluginCategory, [PluginItem])] {
+        PluginCategory.allCases
+            .filter { $0 != .all }
+            .map { category in (category, unusedPlugins.filter { $0.category == category }) }
+            .filter { !$0.1.isEmpty }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .foregroundStyle(.blue)
+                Text(T("工程扫描结果"))
+                    .font(.headline)
+                Spacer()
+            }
+
+            if let result {
+                Text(result.projectName)
+                    .font(.title3.bold())
+                    .lineLimit(1)
+
+                Text(result.fileURL.path)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+
+                if let warning = result.warning {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Text(warning)
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+                } else {
+                    HStack(spacing: 10) {
+                        statChip(T("本工程用到 %@ 个", usedPlugins.count), color: .blue, icon: "checkmark.shield")
+                        statChip(T("未使用 %@ 个", unusedPlugins.count), color: .orange, icon: "pause.circle")
+                        if appleSkipped > 0 {
+                            statChip(T("Apple 自带跳过 %@ 个", appleSkipped), color: .secondary, icon: "lock.shield")
+                        }
+                        Spacer()
+                    }
+
+                    Text(T("本工程依赖的插件已自动加入保护名单，批量停用时不会碰它们。"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if !usedPlugins.isEmpty {
+                        Text(T("本工程用到"))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(usedPlugins) { plugin in
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "shield.fill")
+                                            .font(.system(size: 9))
+                                            .foregroundStyle(.blue)
+                                        Text(plugin.displayName)
+                                            .font(.system(size: 12))
+                                            .lineLimit(1)
+                                        Text(plugin.category.displayName)
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                    }
+                                }
+                            }
+                            .padding(8)
+                        }
+                        .frame(maxHeight: 150)
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                    }
+
+                    if !unusedByCategory.isEmpty {
+                        Text(T("本工程未使用（可停用）"))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(unusedByCategory, id: \.0) { category, items in
+                                    Text(T("%@ · %@ 个", category.displayName, items.count))
+                                        .font(.system(size: 11, weight: .medium))
+                                        .padding(.top, 2)
+                                    ForEach(items) { plugin in
+                                        Text(plugin.displayName)
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                        }
+                        .frame(maxHeight: 150)
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                    }
+
+                    if !unmatched.isEmpty {
+                        Text(T("还有 %@ 个引用没匹配到本机插件（可能来自别的机器或已卸载）：%@", unmatched.count, unmatched.prefix(5).joined(separator: "、")))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+
+                    if !batches.isEmpty {
+                        Divider()
+                        Text(T("这个工程的停用批次"))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(batches) { batch in
+                                    HStack(spacing: 8) {
+                                        Image(systemName: batch.hasPending ? "pause.circle.fill" : "checkmark.circle.fill")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(batch.hasPending ? Color.orange : Color.green)
+                                        Text(batch.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                            .font(.system(size: 11))
+                                        Text(T("%@ 个", batch.entries.count))
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                        Text(batchStatusText(batch))
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(batch.hasPending ? Color.orange : Color.secondary)
+                                        Spacer()
+                                        if batch.hasPending {
+                                            Button(T("恢复这一批")) { onRestoreBatch(batch) }
+                                                .buttonStyle(.plain)
+                                                .font(.system(size: 11, weight: .semibold))
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .hoverTint(cornerRadius: 4)
+                                        }
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                        }
+                        .frame(maxHeight: 100)
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+            } else {
+                Text(T("还没有扫描工程。"))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 10) {
+                Text(T("停用不会删除插件文件，随时可以恢复。"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(T("关闭")) { dismiss() }
+                if let result, result.parsed {
+                    if let pendingBatch {
+                        Button(T("恢复本次停用的 %@ 个", pendingBatch.pendingCount)) {
+                            onRestoreBatch(pendingBatch)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.green)
+                        .hoverBrighten(cornerRadius: 6)
+                    }
+                    if !unusedPlugins.isEmpty {
+                        Button(T("停用未使用的 %@ 个…", unusedPlugins.count)) {
+                            onDisableUnused()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.orange)
+                        .hoverBrighten(cornerRadius: 6)
+                    }
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 660)
+    }
+
+    private func batchStatusText(_ batch: ProjectBatch) -> String {
+        if batch.isFullyRestored { return T("已恢复") }
+        if batch.hasPending {
+            return T("待恢复 %@ 个", batch.pendingCount)
+        }
+        return T("已恢复 %@ 个 · 跳过 %@ 个", batch.restoredCount, batch.skippedCount)
+    }
+
+    private func statChip(_ text: String, color: Color, icon: String) -> some View {
+        Label(text, systemImage: icon)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(color)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(color.opacity(0.10), in: Capsule())
+    }
+}
+
+// MARK: - Library Scan Sheet（直接读 .fcpbundle）
+
+/// 拖入真实库后的面板：按事件/工程列出，可看整库或只选某个工程。
+struct LibraryScanSheet: View {
+    let result: ProjectScanResult?
+    let bundle: FCPBundleScanResult
+    let usedPlugins: [PluginItem]
+    let unusedPlugins: [PluginItem]
+    let appleSkipped: Int
+    let unmatched: [String]
+    let batches: [ProjectBatch]
+    let onSetWholeLibrary: (Bool) -> Void
+    let onToggleProject: (String) -> Void
+    let onRestoreBatch: (ProjectBatch) -> Void
+    let onDisableUnused: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    private var pendingBatch: ProjectBatch? {
+        batches.first(where: \.hasPending)
+    }
+
+    private var unusedByCategory: [(PluginCategory, [PluginItem])] {
+        PluginCategory.allCases
+            .filter { $0 != .all }
+            .map { category in (category, unusedPlugins.filter { $0.category == category }) }
+            .filter { !$0.1.isEmpty }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "externaldrive.badge.magnifyingglass")
+                    .foregroundStyle(.blue)
+                Text(T("库扫描结果"))
+                    .font(.headline)
+                Spacer()
+                Text(T("只读分析"))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(bundle.libraryName)
+                        .font(.title3.bold())
+                        .lineLimit(1)
+                    Text(bundle.libraryURL.path)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+
+                    if let notice = bundle.notice {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "lock.doc")
+                                .foregroundStyle(.blue)
+                            Text(notice)
+                                .font(.caption)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                    }
+
+                    if let warning = result?.warning {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Text(warning)
+                                .font(.callout)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+                    }
+
+                    HStack(spacing: 8) {
+                        statChip(T("%@ 个事件", bundle.events.count), color: .secondary, icon: "rectangle.stack")
+                        statChip(T("%@ 个工程", bundle.projectCount), color: .secondary, icon: "film.stack")
+                        statChip(T("用到 %@ 个", usedPlugins.count), color: .blue, icon: "checkmark.shield")
+                        statChip(T("未使用 %@ 个", unusedPlugins.count), color: .orange, icon: "pause.circle")
+                        if appleSkipped > 0 {
+                            statChip(T("Apple 自带跳过 %@ 个", appleSkipped), color: .secondary, icon: "lock.shield")
+                        }
+                        Spacer()
+                    }
+
+                    Text(T("库里的插件依赖已自动加入保护名单，批量停用时不会碰它们。"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    Toggle(isOn: Binding(
+                        get: { bundle.wholeLibrary },
+                        set: { onSetWholeLibrary($0) }
+                    )) {
+                        Text(T("整库"))
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .toggleStyle(.checkbox)
+
+                    if bundle.events.isEmpty {
+                        Text(T("这个库里没有事件。"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(bundle.events) { event in
+                            eventRow(event)
+                        }
+                    }
+
+                    if !usedPlugins.isEmpty {
+                        Text(T("库里用到"))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 4)
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(usedPlugins) { plugin in
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "shield.fill")
+                                            .font(.system(size: 9))
+                                            .foregroundStyle(.blue)
+                                        Text(plugin.displayName)
+                                            .font(.system(size: 12))
+                                            .lineLimit(1)
+                                        Text(plugin.category.displayName)
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                    }
+                                }
+                            }
+                            .padding(8)
+                        }
+                        .frame(maxHeight: 120)
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                    }
+
+                    if !unusedByCategory.isEmpty {
+                        Text(T("未使用（可停用）"))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 4)
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(unusedByCategory, id: \.0) { category, items in
+                                    Text(T("%@ · %@ 个", category.displayName, items.count))
+                                        .font(.system(size: 11, weight: .medium))
+                                        .padding(.top, 2)
+                                    ForEach(items) { plugin in
+                                        Text(plugin.displayName)
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                        }
+                        .frame(maxHeight: 120)
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                    }
+
+                    if !unmatched.isEmpty {
+                        Text(T("还有 %@ 个引用没匹配到本机插件（可能来自别的机器或已卸载）：%@", unmatched.count, unmatched.prefix(5).joined(separator: "、")))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+
+                    if !batches.isEmpty {
+                        Divider()
+                        Text(T("这个库的停用批次"))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(batches) { batch in
+                                    HStack(spacing: 8) {
+                                        Image(systemName: batch.hasPending ? "pause.circle.fill" : "checkmark.circle.fill")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(batch.hasPending ? Color.orange : Color.green)
+                                        Text(batch.projectName)
+                                            .font(.system(size: 11))
+                                            .lineLimit(1)
+                                        Text(batch.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                        Text(T("%@ 个", batch.entries.count))
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                        if batch.hasPending {
+                                            Button(T("恢复这一批")) { onRestoreBatch(batch) }
+                                                .buttonStyle(.plain)
+                                                .font(.system(size: 11, weight: .semibold))
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .hoverTint(cornerRadius: 4)
+                                        }
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                        }
+                        .frame(maxHeight: 100)
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+            }
+
+            Divider()
+
+            HStack(spacing: 10) {
+                Text(T("停用不会删除插件文件，随时可以恢复。"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(T("关闭")) { dismiss() }
+                if let result, result.parsed {
+                    if let pendingBatch {
+                        Button(T("恢复本次停用的 %@ 个", pendingBatch.pendingCount)) {
+                            onRestoreBatch(pendingBatch)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.green)
+                        .hoverBrighten(cornerRadius: 6)
+                    }
+                    if !unusedPlugins.isEmpty {
+                        Button(T("停用未使用的 %@ 个…", unusedPlugins.count)) {
+                            onDisableUnused()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.orange)
+                        .hoverBrighten(cornerRadius: 6)
+                    }
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 720, height: 660)
+    }
+
+    @ViewBuilder
+    private func eventRow(_ event: FCPBundleEvent) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "rectangle.stack")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                Text(event.name)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                Text(T("%@ 个工程", event.projects.count))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                if event.warning != nil {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange)
+                }
+                Spacer()
+            }
+
+            if event.projects.isEmpty {
+                Text(T("这个事件里没有工程"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 20)
+            } else {
+                ForEach(event.projects) { project in
+                    HStack(spacing: 8) {
+                        Toggle(isOn: Binding(
+                            get: { bundle.selectedProjectIDs.contains(project.id) },
+                            set: { _ in onToggleProject(project.id) }
+                        )) {
+                            EmptyView()
+                        }
+                        .toggleStyle(.checkbox)
+                        .labelsHidden()
+
+                        Text(project.name)
+                            .font(.system(size: 11))
+                            .lineLimit(1)
+                        Text(T("%@ 个效果引用", project.references.count))
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                        if project.warning != nil {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.orange)
+                        }
+                        Spacer()
+                    }
+                    .padding(.leading, 20)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func statChip(_ text: String, color: Color, icon: String) -> some View {
+        Label(text, systemImage: icon)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(color)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(color.opacity(0.10), in: Capsule())
+    }
+}
+
 // MARK: - Batch Result (可滚动、可关闭，绝不卡死)
 
 struct BatchResult: Identifiable {
@@ -2404,7 +3703,7 @@ struct BatchResultSheet: View {
                         .padding(8)
                     }
                     .frame(minHeight: 90, maxHeight: 240)
-                    .background(Color.black.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
                 } label: {
                     Text(T("展开查看每一条原因"))
                         .font(.caption)
@@ -2466,7 +3765,7 @@ struct ConflictChoiceSheet: View {
                 .padding(8)
             }
             .frame(minHeight: 90, maxHeight: 180)
-            .background(Color.black.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
 
             if confirmingOverwrite {
                 Text(T("确认覆盖？现有的同名插件会先移到废纸篓（可在废纸篓还原），原备份不会被动。"))
@@ -2528,7 +3827,7 @@ struct CommandSheet: View {
                     .padding(8)
             }
             .frame(minHeight: 140, maxHeight: 320)
-            .background(Color.black.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
 
             HStack {
                 Spacer()
@@ -2682,9 +3981,9 @@ struct ImportMapSheet: View {
                             .padding(8)
                     }
                     .frame(height: 110)
-                    .background(Color.black.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
                 } label: {
-                    Text(T("系统级插件不能在这里直接改名，下面是可复制的命令："))
+                    Text(T("装在所有用户目录的插件不能在这里直接改名，下面是可复制的命令："))
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
@@ -2829,7 +4128,7 @@ struct RenameLedgerView: View {
                             .padding(8)
                     }
                     .frame(height: 90)
-                    .background(Color.black.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
                 }
             }
 
@@ -2927,7 +4226,7 @@ struct RenameLedgerView: View {
                 viewModel.scan()
             case .needAuthentication(let command):
                 commandText = command
-                message = T("系统级插件恢复原名需要管理员密码，本应用不会自己提权。")
+                message = T("装在所有用户目录的插件恢复原名需要管理员密码，本应用不会自己提权。")
             case .targetExists(let reason):
                 message = reason
             case .failure(let reason):
@@ -2957,7 +4256,7 @@ struct RenameLedgerView: View {
 
             var parts: [String] = []
             if !outcome.restored.isEmpty { parts.append(T("已恢复 %lld 个原名。", outcome.restored.count)) }
-            if !outcome.commands.isEmpty { parts.append(T("%lld 个系统级插件需要管理员命令，见下方。", outcome.commands.count)) }
+            if !outcome.commands.isEmpty { parts.append(T("%lld 个所有用户安装的插件需要管理员命令，见下方。", outcome.commands.count)) }
             if !outcome.failures.isEmpty { parts.append(T("%lld 个没有恢复，原因见下方。", outcome.failures.count)) }
             var text = parts.joined(separator: " ")
             if !outcome.failures.isEmpty {
@@ -2969,3 +4268,40 @@ struct RenameLedgerView: View {
     }
 }
 
+
+// MARK: - 来源筛选
+
+/// 插件列表的来源 / 安装范围筛选。
+/// 来源看「谁做的」，安装范围看「装给谁用」，两件事分开。
+enum PluginFilter: String, CaseIterable, Identifiable {
+    case all
+    case apple
+    case thirdParty
+    case unknown
+    case allUsers
+    case currentUser
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: return T("全部")
+        case .apple: return T("Apple 自带")
+        case .thirdParty: return T("第三方")
+        case .unknown: return T("来源未知")
+        case .allUsers: return T("所有用户安装")
+        case .currentUser: return T("仅当前用户安装")
+        }
+    }
+
+    func matches(_ plugin: PluginItem) -> Bool {
+        switch self {
+        case .all: return true
+        case .apple: return plugin.origin == .apple
+        case .thirdParty: return plugin.origin == .thirdParty
+        case .unknown: return plugin.origin == .unknown
+        case .allUsers: return plugin.isSystemLevel
+        case .currentUser: return !plugin.isSystemLevel
+        }
+    }
+}

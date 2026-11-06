@@ -387,7 +387,7 @@ final class P1FeatureTests: XCTestCase {
     func testRenameChangesFolderAndUpdatesBackupPath() async throws {
         let plugin = try makePlugin(named: "旧名字", contents: "内容")
         let viewModel = makeViewModel()
-        guard case .success(let backup) = await viewModel.backupPlugin(plugin) else {
+        guard case .success = await viewModel.backupPlugin(plugin) else {
             return XCTFail("备份应成功")
         }
 
