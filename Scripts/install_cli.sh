@@ -17,8 +17,9 @@ if [ ! -x "$SOURCE_BIN" ]; then
 fi
 
 mkdir -p "$BIN_DIR"
+rm -f "$TARGET"
 cp "$SOURCE_BIN" "$TARGET"
-chmod +x "$TARGET"
+chmod 755 "$TARGET"
 
 echo "已安装到：$TARGET"
 echo ""

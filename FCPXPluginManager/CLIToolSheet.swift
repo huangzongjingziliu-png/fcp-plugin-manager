@@ -25,7 +25,9 @@ struct CLIToolSheet: View {
                 VStack(alignment: .leading, spacing: 18) {
                     benefitsSection
                     statusSection
-                    pathSection
+                    if !isChecking && !status.onPath {
+                        pathSection
+                    }
                     examplesSection
                 }
                 .padding(20)

@@ -1,8 +1,13 @@
 # 更新日志
 
-> **English summary** — Releases are numbered major.minor.patch and only ship after `swift build` passes with all unit tests green. The latest release, **1.6.7 (2026-11-13)**, renames the menu entry and panel to **Connect Your Agent…** and rewrites the panel copy in plain language for editors: one sentence explains that they can simply tell their AI assistant to “turn off all transition plug-ins”, followed by three benefits (bulk rename/translate, disable by category or project, safe dry-run defaults). Release 1.6.6 added a visible entry in the ⋯ menu (install status, PATH guidance, copyable examples), `--cli --version`, and `--cli scan-project` for `.fcpxml` / `.fcpbundle` with dry-run by default and `--yes` writing the same restorable batch records as the GUI. Release 1.6.5 added direct read-only parsing of `.fcpbundle` libraries, a per-project panel for disabling unused plug-ins, precise restore of disable batches, plug-in origin detection from bundle identifiers and code signatures, a bilingual interface, and unit tests for library parsing, project scanning and localization coverage. Earlier entries cover backup-before-delete, Trash-based deletion, rename ledgers, batch operations, CLI support and the drag-and-drop scan panel. The full history below is in Chinese.
+> **English summary** — Releases are numbered major.minor.patch and only ship after `swift build` passes with all unit tests green. The latest release, **1.6.8 (2026-11-13)**, hides the whole PATH setup block in the **Connect Your Agent…** panel when `~/bin` is already on PATH, leaving only the status line; the block with the copyable `export` line appears only when it is actually needed. Release 1.6.7 renamed the menu entry and panel to **Connect Your Agent…** and rewrote the panel copy in plain language for editors, followed by three benefits (bulk rename/translate, disable by category or project, safe dry-run defaults). Release 1.6.6 added a visible entry in the ⋯ menu (install status, PATH guidance, copyable examples), `--cli --version`, and `--cli scan-project` for `.fcpxml` / `.fcpbundle` with dry-run by default and `--yes` writing the same restorable batch records as the GUI. Release 1.6.5 added direct read-only parsing of `.fcpbundle` libraries, a per-project panel for disabling unused plug-ins, precise restore of disable batches, plug-in origin detection from bundle identifiers and code signatures, a bilingual interface, and unit tests for library parsing, project scanning and localization coverage. Earlier entries cover backup-before-delete, Trash-based deletion, rename ledgers, batch operations, CLI support and the drag-and-drop scan panel. The full history below is in Chinese.
 
 版本号遵循「主.次.修订」。每个版本都以 `swift build` 通过、单元测试全绿为准。
+
+## 1.6.8 — 2026-11-13
+
+- **修掉 PATH 提示自相矛盾**：检测到 `~/bin` 已在 PATH 中时，「PATH 设置」整段（说明文字、可复制的 `export` 行、复制按钮）不再显示，只保留状态行「~/bin 已在 PATH 中」
+- 未配置 PATH 时才显示那一段和复制按钮；其余面板内容、按钮与文案均未改动，中英文行为一致
 
 ## 1.6.7 — 2026-11-13
 
