@@ -93,13 +93,13 @@ swift test --scratch-path /tmp/fcp-test-build
    - **Waiting for admin command (not in effect)** — a system-level plug-in has not been authorized yet, and FCP still loads it
    - **Record incomplete** — a record left by an older version; its original location is unknown
 4. The Backups tab restores single items or batches. Conflicts are checked up front, and plug-ins that are still in place are never overwritten
-5. The **⋯** menu at the top has: import a name map, restore original names, command-line tool, switch language
+5. The **⋯** menu at the top has: import a name map, restore original names, connect your agent, switch language
 
 Plug-in origin is decided from the bundle identifier and code signature: `com.apple.*` or an Apple signature means **Apple built-in**; everything else is **third-party**; if neither can be read, the item is marked **unknown** rather than guessed. Batch disable skips Apple built-ins by default and includes third-party plug-ins whether they are installed for all users or just you; plug-ins in the all-users location are handled with a single administrator authorization.
 
 ## Command-line tool
 
-`fcpplugin` is the same binary as the GUI, with `--cli` switching it into command-line mode. After installing the app, open **Command-Line Tool…** from the **⋯** menu at the top right: it shows the install status, a PATH hint and a one-click install button, and lets you copy the common commands. Nothing extra needs to be downloaded.
+`fcpplugin` is the same binary as the GUI, with `--cli` switching it into command-line mode. After installing the app, open **Connect Your Agent…** from the **⋯** menu at the top right: it shows the install status, a PATH hint and a one-click install button, and lets you copy the common commands. Nothing extra needs to be downloaded.
 
 Manual install:
 

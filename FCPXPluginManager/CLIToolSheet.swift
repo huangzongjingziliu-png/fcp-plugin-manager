@@ -5,7 +5,8 @@ import AppKit
 private let cliInstallURL = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent("bin/fcpplugin")
 
-/// 「命令行工具…」面板：告诉用户 App 内置了 CLI，检查安装状态，并给出常用命令。
+/// 「连接你的 Agent」面板：用剪辑师听得懂的话说明 App 内置的命令行能力，
+/// 检查安装状态，并给出常用命令。
 struct CLIToolSheet: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -22,6 +23,7 @@ struct CLIToolSheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    benefitsSection
                     statusSection
                     pathSection
                     examplesSection
@@ -40,19 +42,46 @@ struct CLIToolSheet: View {
 
     private var header: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "terminal")
+            Image(systemName: "sparkles")
                 .font(.system(size: 26))
                 .foregroundStyle(.tint)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(T("命令行工具"))
+            VStack(alignment: .leading, spacing: 6) {
+                Text(T("连接你的 Agent"))
                     .font(.system(size: 17, weight: .semibold))
-                Text(T("同一个 App 内置的命令行，供脚本或 AI agent 调用，不需要另外安装。"))
+                Text(T("你只要跟自己的 AI 助手说「把转场类插件全关了」，它自己会去查、自己去关，不用记命令，也不用一个个点。"))
                     .font(.system(size: 12))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(T("这是同一个 App 内置的能力，不需要另外安装；给脚本或 AI agent 调用都可以。"))
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
         }
         .padding(20)
+    }
+
+    private var benefitsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(T("能帮你做什么"))
+                .font(.system(size: 13, weight: .semibold))
+            benefitRow(T("批量改名／翻译：让 agent 一次处理几十个插件名"))
+            benefitRow(T("按类别或按工程停用：一句话就能把某个工程没用到的插件停掉"))
+            benefitRow(T("安全兜底：改动默认只预演，加 --yes 才真执行；系统级插件只给命令，不自行提权"))
+        }
+    }
+
+    private func benefitRow(_ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(Color.green)
+                .font(.system(size: 12))
+            Text(text)
+                .font(.system(size: 12))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        }
     }
 
     private var statusSection: some View {

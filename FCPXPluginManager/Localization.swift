@@ -846,11 +846,20 @@ final class Localization: ObservableObject {
             "All unused plug-ins are already disabled or protected.",
         "选择 XML 文件…": "Choose XML File…",
 
-        // 命令行工具面板
-        "命令行工具…": "Command-Line Tool…",
-        "命令行工具": "Command-Line Tool",
-        "同一个 App 内置的命令行，供脚本或 AI agent 调用，不需要另外安装。":
-            "The command line built into this same app, for scripts or AI agents — no separate install needed.",
+        // 连接你的 Agent 面板
+        "连接你的 Agent…": "Connect Your Agent…",
+        "连接你的 Agent": "Connect Your Agent",
+        "你只要跟自己的 AI 助手说「把转场类插件全关了」，它自己会去查、自己去关，不用记命令，也不用一个个点。":
+            "Just tell your AI assistant “turn off all transition plug-ins” — it looks things up and does it itself. No commands to remember, no clicking through them one by one.",
+        "这是同一个 App 内置的能力，不需要另外安装；给脚本或 AI agent 调用都可以。":
+            "This capability is built into the same app — nothing extra to install — and scripts or AI agents can call it too.",
+        "能帮你做什么": "What It Can Do for You",
+        "批量改名／翻译：让 agent 一次处理几十个插件名":
+            "Bulk rename or translation: let the agent handle dozens of plug-in names at once",
+        "按类别或按工程停用：一句话就能把某个工程没用到的插件停掉":
+            "Disable by category or project: one sentence removes the plug-ins a project does not use",
+        "安全兜底：改动默认只预演，加 --yes 才真执行；系统级插件只给命令，不自行提权":
+            "Safe by default: changes are only simulated unless you add --yes; system-level plug-ins only produce commands, never elevated automatically",
         "当前状态": "Current Status",
         "已安装：~/bin/fcpplugin": "Installed: ~/bin/fcpplugin",
         "尚未安装到 ~/bin/fcpplugin": "Not installed to ~/bin/fcpplugin",

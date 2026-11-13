@@ -40,7 +40,7 @@ struct ContentView: View {
     @State private var importPreview: ImportMapPreview?
     // 改名台账（恢复原名）
     @State private var showRenameLedger = false
-    // 命令行工具说明与安装
+    // 连接你的 Agent（内置命令行）说明与安装
     @State private var showCLITool = false
     // 语言切换：以中文原文为 key，切换后整棵视图重建
     @StateObject private var localization = Localization.shared
@@ -801,7 +801,7 @@ struct ContentView: View {
                 Button {
                     showCLITool = true
                 } label: {
-                    Label(T("命令行工具…"), systemImage: "terminal")
+                    Label(T("连接你的 Agent…"), systemImage: "sparkles")
                 }
                 Divider()
                 Picker(

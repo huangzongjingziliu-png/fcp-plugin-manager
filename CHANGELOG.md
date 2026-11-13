@@ -1,8 +1,15 @@
 # 更新日志
 
-> **English summary** — Releases are numbered major.minor.patch and only ship after `swift build` passes with all unit tests green. The latest release, **1.6.6 (2026-11-13)**, adds a visible “Command-Line Tool…” entry in the app's ⋯ menu (install status, PATH guidance, copyable examples), `--cli --version`, and `--cli scan-project` for `.fcpxml` / `.fcpbundle` with dry-run by default and `--yes` writing the same restorable batch records as the GUI. Release 1.6.5 added direct read-only parsing of `.fcpbundle` libraries, a per-project panel for disabling unused plug-ins, precise restore of disable batches, plug-in origin detection from bundle identifiers and code signatures, a bilingual interface, and unit tests for library parsing, project scanning and localization coverage. Earlier entries cover backup-before-delete, Trash-based deletion, rename ledgers, batch operations, CLI support and the drag-and-drop scan panel. The full history below is in Chinese.
+> **English summary** — Releases are numbered major.minor.patch and only ship after `swift build` passes with all unit tests green. The latest release, **1.6.7 (2026-11-13)**, renames the menu entry and panel to **Connect Your Agent…** and rewrites the panel copy in plain language for editors: one sentence explains that they can simply tell their AI assistant to “turn off all transition plug-ins”, followed by three benefits (bulk rename/translate, disable by category or project, safe dry-run defaults). Release 1.6.6 added a visible entry in the ⋯ menu (install status, PATH guidance, copyable examples), `--cli --version`, and `--cli scan-project` for `.fcpxml` / `.fcpbundle` with dry-run by default and `--yes` writing the same restorable batch records as the GUI. Release 1.6.5 added direct read-only parsing of `.fcpbundle` libraries, a per-project panel for disabling unused plug-ins, precise restore of disable batches, plug-in origin detection from bundle identifiers and code signatures, a bilingual interface, and unit tests for library parsing, project scanning and localization coverage. Earlier entries cover backup-before-delete, Trash-based deletion, rename ledgers, batch operations, CLI support and the drag-and-drop scan panel. The full history below is in Chinese.
 
 版本号遵循「主.次.修订」。每个版本都以 `swift build` 通过、单元测试全绿为准。
+
+## 1.6.7 — 2026-11-13
+
+- **改说人话**：右上角「⋯」菜单的「命令行工具…」改为「连接你的 Agent…」（英文 `Connect Your Agent…`），面板标题同步改名
+- **先讲好处**：面板顶部用剪辑师听得懂的话说明——跟 AI 助手说一句「把转场类插件全关了」，它自己会去查、自己去关，不用记命令，也不用一个个点
+- **三条好处单独列出**：批量改名／翻译、按类别或按工程停用、安全兜底（默认只预演，加 `--yes` 才执行，系统级插件只给命令不自行提权）
+- 帮助文本、脚本、测试里的内部叫法仍是 CLI，本次只改用户可见文案，中英文都有
 
 ## 1.6.6 — 2026-11-13
 
