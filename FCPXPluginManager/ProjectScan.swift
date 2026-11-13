@@ -440,5 +440,58 @@ extension PluginViewModel {
                 && (includeApple || plugin.origin != .apple)
         }
     }
+
+    // MARK: 停用「未使用」（界面与命令行共用）
+
+    struct ProjectDisableSummary {
+        var disabled: [DisabledItem] = []
+        /// 装在所有用户目录、需要一次管理员授权才真正生效的条目
+        var adminPending: [DisabledItem] = []
+        var failures: [String] = []
+        var batch: ProjectBatch?
+    }
+
+    /// 停用当前扫描范围里没用到的插件，并记成同一套批次。
+    /// 界面和 `fcpplugin --cli scan-project --yes` 都走这里，避免两边行为不一致。
+    func disableProjectUnused() async -> ProjectDisableSummary {
+        var summary = ProjectDisableSummary()
+        guard projectScan != nil else { return summary }
+        let targets = projectUnusedCandidates()
+        guard !targets.isEmpty else { return summary }
+
+        let batchName = currentScanBatchName
+        let outcome = await disableAll(targets)
+        summary.disabled = outcome.disabledItems
+        summary.adminPending = outcome.adminItems
+        summary.failures = outcome.failures
+
+        if !outcome.disabledItems.isEmpty {
+            addOperation(
+                kind: .disablePlugins,
+                summary: T("停用「%@」未使用的 %@ 个插件", batchName, outcome.disabledItems.count),
+                disabled: outcome.disabledItems
+            )
+        }
+        if let scan = projectScan, !outcome.disabledItems.isEmpty {
+            summary.batch = recordProjectBatch(
+                projectName: batchName,
+                projectPath: scan.fileURL.path,
+                disabled: outcome.disabledItems,
+                includedSystem: targets.contains(where: \.isSystemLevel)
+            )
+        }
+        return summary
+    }
+
+    /// 命令行用：只保留某个工程的选中状态（整库取消，其它工程取消）
+    func selectOnlyBundleProject(_ id: String) {
+        guard var scan = projectScan, var bundle = scan.bundle else { return }
+        bundle.wholeLibrary = false
+        bundle.selectedProjectIDs = [id]
+        scan.bundle = bundle
+        applyBundleSelection(to: &scan)
+        projectScan = scan
+        saveProtection(projectName: scan.projectName)
+    }
 }
 

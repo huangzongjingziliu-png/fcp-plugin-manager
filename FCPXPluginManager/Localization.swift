@@ -844,7 +844,34 @@ final class Localization: ObservableObject {
         "已停用 %@ 个未使用的插件。": "Disabled %@ unused plug-in(s).",
         "没用到的插件都已停用，或都在保护名单里。":
             "All unused plug-ins are already disabled or protected.",
-        "选择 XML 文件…": "Choose XML File…"
+        "选择 XML 文件…": "Choose XML File…",
+
+        // 命令行工具面板
+        "命令行工具…": "Command-Line Tool…",
+        "命令行工具": "Command-Line Tool",
+        "同一个 App 内置的命令行，供脚本或 AI agent 调用，不需要另外安装。":
+            "The command line built into this same app, for scripts or AI agents — no separate install needed.",
+        "当前状态": "Current Status",
+        "已安装：~/bin/fcpplugin": "Installed: ~/bin/fcpplugin",
+        "尚未安装到 ~/bin/fcpplugin": "Not installed to ~/bin/fcpplugin",
+        "版本 %@，与 App 一致": "Version %@, matches the app",
+        "版本不一致（%@），建议重新安装": "Version mismatch (%@) — reinstalling is recommended",
+        "~/bin 已在 PATH 中": "~/bin is on PATH",
+        "~/bin 不在 PATH 中，需要手动加一行": "~/bin is not on PATH — add one line manually",
+        "已是最新版本": "Already up to date",
+        "一键安装到 ~/bin": "Install to ~/bin",
+        "安装失败：%@": "Installation failed: %@",
+        "已安装到 ~/bin/fcpplugin": "Installed to ~/bin/fcpplugin",
+        "PATH 设置": "PATH Setup",
+        "把这一行加到 ~/.zshrc 末尾，然后重开终端（本工具不会自动改写你的 shell 配置）：":
+            "Add this line to the end of ~/.zshrc, then reopen Terminal (this app will not rewrite your shell config):",
+        "复制": "Copy",
+        "常用命令": "Common Commands",
+        "每条都可以直接粘贴到终端；一定要带 --cli，否则会启动图形界面。":
+            "Each line can be pasted straight into Terminal. Always include --cli, otherwise the graphical app starts.",
+        "找不到 App 主程序": "Cannot locate the app's main executable",
+        "改文件的命令默认只预演，加 --yes 才执行；系统级插件只输出 sudo 命令，不自行提权。":
+            "Commands that change files only simulate by default; add --yes to execute. System-level plug-ins only print sudo commands — this app never elevates itself."
     ]
 }
 

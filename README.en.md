@@ -93,59 +93,76 @@ swift test --scratch-path /tmp/fcp-test-build
    - **Waiting for admin command (not in effect)** — a system-level plug-in has not been authorized yet, and FCP still loads it
    - **Record incomplete** — a record left by an older version; its original location is unknown
 4. The Backups tab restores single items or batches. Conflicts are checked up front, and plug-ins that are still in place are never overwritten
-5. The **⋯** menu at the top has: import a name map, restore original names, switch language
+5. The **⋯** menu at the top has: import a name map, restore original names, command-line tool, switch language
 
 Plug-in origin is decided from the bundle identifier and code signature: `com.apple.*` or an Apple signature means **Apple built-in**; everything else is **third-party**; if neither can be read, the item is marked **unknown** rather than guessed. Batch disable skips Apple built-ins by default and includes third-party plug-ins whether they are installed for all users or just you; plug-ins in the all-users location are handled with a single administrator authorization.
 
 ## Command-line tool
 
-`fcpplugin` is the same binary as the GUI, with `--cli` switching it into command-line mode. To install:
+`fcpplugin` is the same binary as the GUI, with `--cli` switching it into command-line mode. After installing the app, open **Command-Line Tool…** from the **⋯** menu at the top right: it shows the install status, a PATH hint and a one-click install button, and lets you copy the common commands. Nothing extra needs to be downloaded.
+
+Manual install:
 
 ```bash
 ./Scripts/build_app.sh     # build the app first
 ./Scripts/install_cli.sh   # installs to ~/bin/fcpplugin by default
 ```
 
-If `~/bin` is not on your PATH, add `export PATH="$HOME/bin:$PATH"` to `~/.zshrc`.
+If `~/bin` is not on your PATH, add `export PATH="$HOME/bin:$PATH"` to `~/.zshrc` (the tool never rewrites your shell config).
 
-Common examples (everything that changes files is a dry run unless you add `--yes`):
+Common examples (every line needs `--cli`, otherwise the graphical app starts; everything that changes files is a dry run unless you add `--yes`):
 
 ```bash
+# Version
+fcpplugin --cli --version
+
 # List every plug-in as JSON, easy for other programs to parse
-fcpplugin list --json
+fcpplugin --cli list --json
 
 # Only one category
-fcpplugin list --category effects
+fcpplugin --cli list --category transitions
 
 # Only disabled items
-fcpplugin list --disabled --json
+fcpplugin --cli list --disabled --json
 
-# Disable by name (prints what it will do first)
-fcpplugin disable --path "3D Camera Rig" --yes
+# Disable by name (dry run without --yes)
+fcpplugin --cli disable --path "3D Camera Rig"
+
+# Disable by name and execute
+fcpplugin --cli disable --path "3D Camera Rig" --yes
 
 # Disable a whole category
-fcpplugin disable --category transitions --yes
+fcpplugin --cli disable --category transitions --yes
 
 # Turn everything back on
-fcpplugin enable --all --yes
+fcpplugin --cli enable --all --yes
+
+# Scan a project — .fcpxml or .fcpbundle — preview first
+fcpplugin --cli scan-project --path "~/Movies/Project.fcpxml"
+
+# Scan one project inside a library and output JSON
+fcpplugin --cli scan-project --path "~/Movies/Library.fcpbundle" --project "Project Name" --json
+
+# Once the list looks right: disable unused plug-ins and record a restorable batch
+fcpplugin --cli scan-project --path "~/Movies/Library.fcpbundle" --yes
 
 # Restore a specific backup
-fcpplugin restore --backup "3D Camera Rig_20261106-101500-123" --yes
+fcpplugin --cli restore --backup "3D Camera Rig_20261106-101500-123" --yes
 
 # Rename one plug-in
-fcpplugin rename --path "3D Camera Rig" --name "3D Camera Rig EN" --yes
+fcpplugin --cli rename --path "3D Camera Rig" --name "3D Camera Rig EN" --yes
 
 # Rename in bulk from a mapping file (preview first, then add --yes)
-fcpplugin rename --map names.json
-fcpplugin rename --map names.json --yes
+fcpplugin --cli rename --map names.json
+fcpplugin --cli rename --map names.json --yes
 
 # Inspect the rename ledger / operation log
-fcpplugin ledger --json
-fcpplugin log --json
+fcpplugin --cli ledger --json
+fcpplugin --cli log --json
 
 # Restore original names from the ledger
-fcpplugin restore-name --category effects --yes
-fcpplugin restore-name --all --yes
+fcpplugin --cli restore-name --category effects --yes
+fcpplugin --cli restore-name --all --yes
 ```
 
 Safety rules:
@@ -159,9 +176,9 @@ Safety rules:
 
 The CLI does not translate anything — that is the agent's job:
 
-1. `fcpplugin list --json > plugins.json`
+1. `fcpplugin --cli list --json > plugins.json`
 2. Have the agent produce a mapping from that list: `{"original path": "English name"}`
-3. `fcpplugin rename --map map.json` to preview, then add `--yes` once it looks right
+3. `fcpplugin --cli rename --map map.json` to preview, then add `--yes` once it looks right
 
 Names are validated before anything runs: empty names, illegal characters such as `/`, duplicates in the same folder and missing paths are all flagged in the preview, so a batch never fails halfway through.
 

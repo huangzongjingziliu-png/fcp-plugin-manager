@@ -45,13 +45,18 @@ enum CLIRunner {
         case "restore":          return try await restoreCommand(rest)
         case "restore-name", "unrename":
             return try await restoreNameCommand(rest)
+        case "scan-project", "scan":
+            return try await scanProjectCommand(rest)
         case "ledger":           return try await ledgerCommand(rest)
         case "log", "logs":      return try await logCommand(rest)
+        case "--version", "-v", "version":
+            print(AppInfo.version)
+            return 0
         case "help", "--help", "-h":
             printHelp()
             return 0
         default:
-            throw CLIError("未知命令「\(command)」。用 `fcpplugin help` 查看用法。")
+            throw CLIError("未知命令「\(command)」。用 `fcpplugin --cli help` 查看用法。")
         }
     }
 
@@ -572,6 +577,142 @@ enum CLIRunner {
         throw CLIError("请指定 `--path <路径或名字>`、`--category <类别>` 或 `--all`。")
     }
 
+    // MARK: - scan-project
+
+    @MainActor
+    private static func scanProjectCommand(_ args: [String]) async throws -> Int32 {
+        let options = try Options(args)
+        guard let rawPath = options.value("path") else {
+            throw CLIError("scan-project 需要 `--path <工程.fcpxml 或资源库.fcpbundle>`。")
+        }
+        let path = (rawPath as NSString).expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw CLIError("路径不存在：\(path)")
+        }
+        let url = URL(fileURLWithPath: path)
+
+        let viewModel = PluginViewModel()
+        await viewModel.scanNow()
+        viewModel.loadDisabled()
+        viewModel.loadProjectBatches()
+
+        let result = try await viewModel.scanProject(at: url)
+
+        if let wanted = options.value("project") {
+            guard let bundle = result.bundle else {
+                throw CLIError("--project 只能用于 .fcpbundle 资源库；XML 工程只有一个工程，不用指定。")
+            }
+            let matches = bundle.allProjects.filter { $0.id == wanted || $0.name == wanted }
+            guard matches.count == 1, let project = matches.first else {
+                let reason = matches.isEmpty ? "找不到这个工程" : "这个名字对应多个工程，请改用完整 id"
+                let list = bundle.allProjects.map { "  \($0.id)" }.joined(separator: "\n")
+                throw CLIError("\(reason)：\(wanted)\n可用工程：\n\(list)")
+            }
+            viewModel.selectOnlyBundleProject(project.id)
+        }
+
+        guard let scan = viewModel.projectScan else {
+            throw CLIError("扫描没有返回结果。")
+        }
+        if let warning = scan.warning {
+            throw CLIError(warning)
+        }
+
+        let usedPlugins = viewModel.plugins.filter { scan.usedPaths.contains($0.path) }
+        let usedNames = usedPlugins.map(\.displayName).sorted()
+        let targets = viewModel.projectUnusedCandidates()
+        let unusedNames = targets.map(\.displayName).sorted()
+        let adminCount = targets.filter(\.isSystemLevel).count
+        let dryRun = !options.flag("yes")
+        let wantsJSON = options.flag("json")
+
+        if !wantsJSON {
+            print(T("工程：%@", scan.projectName))
+            if let bundle = scan.bundle {
+                print(T("库内 %@ 个事件、%@ 个工程；本次范围：%@",
+                        bundle.events.count, bundle.projectCount, bundle.selectionLabel))
+            }
+            print(T("用到 %@ 个插件：", usedNames.count))
+            for name in usedNames { print("  · \(name)") }
+            if usedNames.isEmpty { print("  （没有）") }
+            if !scan.unmatched.isEmpty {
+                print(T("另有 %@ 条引用没匹配到本机插件（不会因此停用对应插件）：", scan.unmatched.count))
+                for item in scan.unmatched.prefix(10) { print("  ? \(item)") }
+            }
+            print(T("未使用、可停用 %@ 个：", unusedNames.count))
+            for name in unusedNames.prefix(20) { print("  - \(name)") }
+            if unusedNames.count > 20 {
+                print(T("  …另有 %@ 个", unusedNames.count - 20))
+            }
+            if adminCount > 0 {
+                print(T("其中 %@ 个装在所有用户目录，真正停用需要一次管理员授权。", adminCount))
+            }
+        }
+
+        if dryRun {
+            if wantsJSON {
+                printJSON([
+                    "path": scan.fileURL.path,
+                    "project": scan.projectName,
+                    "projects": scan.bundle?.projectCount ?? 1,
+                    "events": scan.bundle?.events.count ?? 0,
+                    "used": usedNames,
+                    "unused": unusedNames,
+                    "unmatched": scan.unmatched,
+                    "adminRequired": adminCount,
+                    "applied": false
+                ])
+            } else {
+                print("")
+                print(T("以上是预演，没有改动任何文件。确认无误后加 `--yes` 执行。"))
+            }
+            return 0
+        }
+
+        guard !targets.isEmpty else {
+            if wantsJSON {
+                printJSON(["path": scan.fileURL.path, "applied": false, "reason": "nothing-unused"])
+            } else {
+                print(T("没有可停用的插件，什么都不用做。"))
+            }
+            return 0
+        }
+
+        let summary = await viewModel.disableProjectUnused()
+
+        if wantsJSON {
+            printJSON([
+                "path": scan.fileURL.path,
+                "project": scan.projectName,
+                "used": usedNames,
+                "unused": unusedNames,
+                "applied": true,
+                "disabled": summary.disabled.map(\.displayName),
+                "adminRequired": summary.adminPending.map(\.displayName),
+                "batch": summary.batch?.projectName ?? "",
+                "failures": summary.failures
+            ])
+            return summary.failures.isEmpty ? 0 : 1
+        }
+
+        print("")
+        print(T("已停用 %@ 个未使用的插件。", summary.disabled.count))
+        if let batch = summary.batch {
+            print(T("已记入批次「%@」，可在界面「已停用」页整批恢复。", batch.projectName))
+        }
+        if !summary.adminPending.isEmpty {
+            print(T("以下 %@ 个需要管理员权限，请复制到终端执行（CLI 不会自己提权）：", summary.adminPending.count))
+            for item in summary.adminPending {
+                print("sudo mv '\(item.originalPath)' '\(item.currentPath)'")
+            }
+        }
+        if !summary.failures.isEmpty {
+            print(T("有 %@ 个停用失败：", summary.failures.count))
+            for failure in summary.failures { print("  ! \(failure)") }
+        }
+        return summary.failures.isEmpty ? 0 : 1
+    }
+
     // MARK: - Output
 
     private static func printJSON(_ object: Any) {
@@ -590,6 +731,7 @@ enum CLIRunner {
         fcpplugin — Final Cut Pro 插件管理命令行
 
         用法：
+          fcpplugin --cli --version
           fcpplugin list [--category effects|generators|transitions|titles] [--json]
           fcpplugin list --disabled [--category <类别>] [--json]
           fcpplugin rename --path <插件路径或名字> --name <新名字> [--yes]
@@ -597,9 +739,12 @@ enum CLIRunner {
           fcpplugin disable --path <路径或名字> | --category <类别> | --all [--yes]
           fcpplugin enable  --path <原路径或名字> | --category <类别> | --all [--yes]
           fcpplugin restore --backup <备份路径或名字> | --all [--yes]
+          fcpplugin scan-project --path <工程.fcpxml 或库.fcpbundle> [--project <工程 id>] [--json] [--yes]
           fcpplugin ledger [--category <类别>] [--json]
           fcpplugin restore-name --path <路径或当前名字> | --category <类别> | --all [--yes]
           fcpplugin log [--json]
+
+        注意：一定要先写 --cli，否则会启动图形界面。
 
         安全规则：
           • 所有会改文件的命令默认只预演，必须加 --yes 才执行。

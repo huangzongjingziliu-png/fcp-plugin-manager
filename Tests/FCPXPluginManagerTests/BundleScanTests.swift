@@ -286,4 +286,62 @@ final class BundleScanTests: XCTestCase {
             XCTAssertEqual(UInt64(values.fileSize ?? 0), before[index].1, "\(url.lastPathComponent) 不能被写入")
         }
     }
+
+    // MARK: - scan-project（命令行预演 / 执行）
+
+    /// 预演只读：插件和库都不能被动，也不产生批次记录
+    func testScanPreviewLeavesPluginAndLibraryUntouched() async throws {
+        let used = try makePlugin(named: "Sample Plugin")
+        let unused = try makePlugin(named: "没被用到的插件")
+        let bundle = try makeBundle(events: [
+            (folder: "01A", nameBlob: Self.eventBlob, projects: [
+                (folder: "R1", nameBlob: Self.projectBlob, blobs: [Self.effectBlob])
+            ])
+        ])
+
+        let viewModel = makeViewModel()
+        viewModel.plugins = [used, unused]
+        _ = try await viewModel.scanProject(at: bundle)
+
+        XCTAssertEqual(viewModel.projectUnusedCandidates().map(\.name), [unused.name])
+        XCTAssertTrue(fm.fileExists(atPath: unused.path), "预演不能移动插件")
+        XCTAssertTrue(fm.fileExists(atPath: used.path), "用到的插件更不能动")
+        XCTAssertTrue(viewModel.projectBatches.isEmpty, "预演不能写批次记录")
+    }
+
+    /// --yes 真正执行：写入批次记录，并且能按批次恢复
+    func testDisableUnusedWritesBatchAndRestores() async throws {
+        let used = try makePlugin(named: "Sample Plugin")
+        let unused = try makePlugin(named: "没被用到的插件")
+        let bundle = try makeBundle(events: [
+            (folder: "01A", nameBlob: Self.eventBlob, projects: [
+                (folder: "R1", nameBlob: Self.projectBlob, blobs: [Self.effectBlob])
+            ])
+        ])
+
+        let viewModel = makeViewModel()
+        viewModel.plugins = [used, unused]
+        _ = try await viewModel.scanProject(at: bundle)
+
+        let summary = await viewModel.disableProjectUnused()
+        XCTAssertEqual(summary.disabled.map(\.name), [unused.name])
+        XCTAssertTrue(summary.failures.isEmpty)
+        XCTAssertFalse(fm.fileExists(atPath: unused.path), "未使用的插件应被停用")
+        XCTAssertTrue(fm.fileExists(atPath: used.path), "用到的插件不能被停用")
+
+        let batch = try XCTUnwrap(summary.batch, "停用后必须记入批次")
+        XCTAssertEqual(batch.projectPath, bundle.path)
+        XCTAssertEqual(batch.entries.map(\.pluginName), [unused.name])
+        XCTAssertEqual(batch.pendingCount, 1)
+
+        // 换一个实例读盘，确认批次真的落盘了
+        let reopened = makeViewModel()
+        let stored = try XCTUnwrap(reopened.projectBatches.first { $0.id == batch.id })
+        XCTAssertEqual(stored.pendingCount, 1)
+
+        let outcome = await reopened.restoreProjectBatch(stored.id)
+        XCTAssertEqual(outcome.restored, [unused.name])
+        XCTAssertTrue(outcome.failed.isEmpty)
+        XCTAssertTrue(fm.fileExists(atPath: unused.path), "恢复后插件必须回到原位置")
+    }
 }

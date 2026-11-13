@@ -36,8 +36,10 @@ case ":$PATH:" in
 esac
 
 echo ""
-echo "试试："
-echo "  fcpplugin list --category effects"
-echo "  fcpplugin list --json"
+echo "试试（一定要带 --cli，否则会启动图形界面）："
+echo "  fcpplugin --cli --version"
+echo "  fcpplugin --cli list --category transitions"
+echo "  fcpplugin --cli list --json"
+echo "  fcpplugin --cli scan-project --path \"<工程.fcpxml 或库.fcpbundle>\""
 echo ""
 echo "卸载：rm \"$TARGET\""

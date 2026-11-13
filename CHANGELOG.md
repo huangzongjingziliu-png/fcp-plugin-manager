@@ -1,8 +1,20 @@
 # 更新日志
 
-> **English summary** — Releases are numbered major.minor.patch and only ship after `swift build` passes with all unit tests green. The latest release, **1.6.5 (2026-11-06)**, adds direct read-only parsing of `.fcpbundle` libraries (no XML export required), a per-project panel for disabling unused plug-ins, precise restore of disable batches, plug-in origin detection from bundle identifiers and code signatures, a bilingual interface, and unit tests for library parsing, project scanning and localization coverage. Earlier entries cover backup-before-delete, Trash-based deletion, rename ledgers, batch operations, CLI support and the drag-and-drop scan panel. The full history below is in Chinese.
+> **English summary** — Releases are numbered major.minor.patch and only ship after `swift build` passes with all unit tests green. The latest release, **1.6.6 (2026-11-13)**, adds a visible “Command-Line Tool…” entry in the app's ⋯ menu (install status, PATH guidance, copyable examples), `--cli --version`, and `--cli scan-project` for `.fcpxml` / `.fcpbundle` with dry-run by default and `--yes` writing the same restorable batch records as the GUI. Release 1.6.5 added direct read-only parsing of `.fcpbundle` libraries, a per-project panel for disabling unused plug-ins, precise restore of disable batches, plug-in origin detection from bundle identifiers and code signatures, a bilingual interface, and unit tests for library parsing, project scanning and localization coverage. Earlier entries cover backup-before-delete, Trash-based deletion, rename ledgers, batch operations, CLI support and the drag-and-drop scan panel. The full history below is in Chinese.
 
 版本号遵循「主.次.修订」。每个版本都以 `swift build` 通过、单元测试全绿为准。
+
+## 1.6.6 — 2026-11-13
+
+- **界面里能看见 CLI 了**：右上角「⋯」菜单新增「命令行工具…」（英文 `Command-Line Tool…`）。面板说明这是同一个 App 内置的命令行，供脚本或 AI agent 调用，不需要另外安装
+- **状态检测（只读）**：检查 `~/bin/fcpplugin` 是否已安装、运行 `--cli --version` 比对是否与 App 版本一致、读 shell 配置判断 `~/bin` 是否在 PATH；全程不写用户配置
+- **一键安装**：把 App 主二进制复制到 `~/bin/fcpplugin` 并加执行位；已安装且版本一致时按钮置灰
+- **PATH 提示不自动改 shell**：只给出 `export PATH="$HOME/bin:$PATH"` 一行和复制按钮，由用户自己决定是否加到 `~/.zshrc`
+- **常用命令示例**：列表、按类别、停用（预演）、全部启用、工程扫描、工程扫描 JSON，每条都带复制按钮，并且全部写明必须加 `--cli`
+- **CLI 新增 `--version`**：输出与 App 相同的版本号；版本号改为单一来源（`AppInfo.swift`），打包脚本也从这里读
+- **CLI 新增 `scan-project`**：`--path` 接受 `.fcpxml` 或 `.fcpbundle`，走与界面相同的 `FCPBundleReader` / `ProjectScan`，输出「用到 N 个 / 未使用 M 个」；默认只预演，`--yes` 才停用并写入同一套批次记录，可用现有批次恢复；支持 `--project` 指定库内工程与 `--json`
+- **帮助文本同步**：`help` 里补上版本号与 `scan-project` 用法，并明确「一定要先写 `--cli`」
+- **新增 6 个测试**：版本号为三段数字、所有示例都带 `--cli`、示例覆盖必需命令、未安装时状态正确、扫描预演不动插件也不写批次、`--yes` 写入批次并能恢复
 
 ## 1.6.5 — 2026-11-06
 

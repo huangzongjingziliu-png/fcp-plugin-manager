@@ -6,7 +6,8 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="FCP 插件管理"
 BUNDLE_ID="com.huangzongjing.fcppluginmanager"
-APP_VERSION="1.6.5"
+APP_VERSION="$(sed -n 's/.*static let version = "\([^"]*\)".*/\1/p' FCPXPluginManager/AppInfo.swift | head -1)"
+[ -n "$APP_VERSION" ] || { echo "错误：读不到 FCPXPluginManager/AppInfo.swift 里的版本号"; exit 1; }
 BUILD_VERSION="${BUILD_VERSION:-$(date +%Y%m%d)}"
 EXECUTABLE_NAME="FCPXPluginManager"
 

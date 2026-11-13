@@ -91,59 +91,76 @@ swift test --scratch-path /tmp/fcp-test-build
    - **待执行管理员命令（未生效）**：系统级插件还没授权，FCP 仍会加载
    - **记录信息缺失**：老版本留下的记录，原始位置未知
 4. 「已备份」页可以单个或批量恢复；恢复前会预检冲突，不会覆盖正在使用的插件
-5. 顶部「⋯」菜单里有：导入译名表、恢复原名、语言切换
+5. 顶部「⋯」菜单里有：导入译名表、恢复原名、命令行工具、语言切换
 
 插件来源按包标识与代码签名判定：`com.apple.*` 或 Apple 签名的算「Apple 自带」，其余算「第三方」，两者都读不到的标「来源未知」，不猜。批量停用默认跳过 Apple 自带，第三方不论装在所有用户目录还是当前用户目录都会参与，其中装在所有用户目录的会统一走一次管理员授权。
 
 ## 命令行工具
 
-`fcpplugin` 与 GUI 是同一份二进制，加 `--cli` 进入命令行模式。安装：
+`fcpplugin` 与 GUI 是同一份二进制，加 `--cli` 进入命令行模式。装好 App 后，从右上角「⋯」菜单打开「命令行工具…」，里面会显示安装状态、PATH 提示和一键安装按钮，常用命令也能直接复制，不需要另外下载任何东西。
+
+手动安装：
 
 ```bash
 ./Scripts/build_app.sh     # 先打好 app
 ./Scripts/install_cli.sh   # 默认装到 ~/bin/fcpplugin
 ```
 
-如果 `~/bin` 不在 PATH 里，把 `export PATH="$HOME/bin:$PATH"` 加到 `~/.zshrc`。
+如果 `~/bin` 不在 PATH 里，把 `export PATH="$HOME/bin:$PATH"` 加到 `~/.zshrc`（工具不会自动改写你的 shell 配置）。
 
-常用例子（默认只预演，加 `--yes` 才真改文件）：
+常用例子（每一条都必须带 `--cli`，否则会启动图形界面；默认只预演，加 `--yes` 才真改文件）：
 
 ```bash
+# 版本号
+fcpplugin --cli --version
+
 # 列出所有插件，输出 JSON 方便程序解析
-fcpplugin list --json
+fcpplugin --cli list --json
 
 # 只看某一类
-fcpplugin list --category effects
+fcpplugin --cli list --category transitions
 
 # 只看已禁用的
-fcpplugin list --disabled --json
+fcpplugin --cli list --disabled --json
 
-# 按名字停用（会先打印将要做什么）
-fcpplugin disable --path "3D Camera Rig" --yes
+# 按名字停用（不带 --yes 只预演）
+fcpplugin --cli disable --path "3D Camera Rig"
+
+# 按名字停用并执行
+fcpplugin --cli disable --path "3D Camera Rig" --yes
 
 # 整类停用
-fcpplugin disable --category transitions --yes
+fcpplugin --cli disable --category transitions --yes
 
 # 全部启用回来
-fcpplugin enable --all --yes
+fcpplugin --cli enable --all --yes
+
+# 扫描工程：.fcpxml 或 .fcpbundle 都行，先预演
+fcpplugin --cli scan-project --path "~/Movies/Project.fcpxml"
+
+# 扫描库里的某一个工程并输出 JSON
+fcpplugin --cli scan-project --path "~/Movies/Library.fcpbundle" --project "工程名" --json
+
+# 确认清单无误后执行：停用未使用的插件，并记入可恢复批次
+fcpplugin --cli scan-project --path "~/Movies/Library.fcpbundle" --yes
 
 # 恢复某个备份
-fcpplugin restore --backup "3D Camera Rig_20261106-101500-123" --yes
+fcpplugin --cli restore --backup "3D Camera Rig_20261106-101500-123" --yes
 
 # 单个改名
-fcpplugin rename --path "3D Camera Rig" --name "3D Camera Rig EN" --yes
+fcpplugin --cli rename --path "3D Camera Rig" --name "3D Camera Rig EN" --yes
 
 # 按映射表批量改名（先出结果，确认后加 --yes）
-fcpplugin rename --map names.json
-fcpplugin rename --map names.json --yes
+fcpplugin --cli rename --map names.json
+fcpplugin --cli rename --map names.json --yes
 
 # 查看改名台账 / 操作日志
-fcpplugin ledger --json
-fcpplugin log --json
+fcpplugin --cli ledger --json
+fcpplugin --cli log --json
 
 # 按台账恢复原名
-fcpplugin restore-name --category effects --yes
-fcpplugin restore-name --all --yes
+fcpplugin --cli restore-name --category effects --yes
+fcpplugin --cli restore-name --all --yes
 ```
 
 安全约定：
@@ -157,9 +174,9 @@ fcpplugin restore-name --all --yes
 
 CLI 不做翻译，翻译交给 agent：
 
-1. `fcpplugin list --json > plugins.json`
+1. `fcpplugin --cli list --json > plugins.json`
 2. 让 agent 按清单生成映射：`{"原路径": "英文名"}`
-3. `fcpplugin rename --map map.json` 先看预览，确认后加 `--yes`
+3. `fcpplugin --cli rename --map map.json` 先看预览，确认后加 `--yes`
 
 映射里的名字会先经过校验：空名字、含 `/` 等非法字符、同目录重名、路径不存在，都会在预览阶段标出，不会执行到一半才失败。
 

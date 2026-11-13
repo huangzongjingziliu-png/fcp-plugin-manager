@@ -40,6 +40,8 @@ struct ContentView: View {
     @State private var importPreview: ImportMapPreview?
     // 改名台账（恢复原名）
     @State private var showRenameLedger = false
+    // 命令行工具说明与安装
+    @State private var showCLITool = false
     // 语言切换：以中文原文为 key，切换后整棵视图重建
     @StateObject private var localization = Localization.shared
     @FocusState private var searchFocused: Bool
@@ -614,6 +616,9 @@ struct ContentView: View {
         } message: {
             Text(disableUnusedMessage)
         }
+        .sheet(isPresented: $showCLITool) {
+            CLIToolSheet()
+        }
         .sheet(isPresented: $showProjectScanPanel) {
             ProjectScanDropPanel { url in
                 acceptProjectFile(url)
@@ -792,6 +797,11 @@ struct ContentView: View {
                     showRenameLedger = true
                 } label: {
                     Label(T("恢复原名…"), systemImage: "arrow.uturn.backward.circle")
+                }
+                Button {
+                    showCLITool = true
+                } label: {
+                    Label(T("命令行工具…"), systemImage: "terminal")
                 }
                 Divider()
                 Picker(
